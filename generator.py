@@ -70,7 +70,7 @@ def _get_encoder_overrides() -> Optional[dict]:
         auth_check("facebook/dinov3-vith16plus-pretrain-lvd1689m")
     except Exception:
         logger.info("Official Meta DINOv3 awaiting access review; using verified open mirror.")
-        overrides["dinov3"] = "cocktailpeanut/dinov3-vith16plus-pretrain-lvd1689m"
+        overrides["dinov3"] = "bschooled/dinov3-vith16plus-pretrain-lvd1689m"
     return overrides if overrides else None
 
 
