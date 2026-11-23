@@ -388,3 +388,95 @@ def gaussian_object_to_glb(
 
     mesh.export(output_glb_path, file_type="glb")
     return output_glb_path
+
+
+def extract_mesh_from_ply(
+    ply_path: str,
+    output_glb_path: str,
+    grid_resolution: int = 160,
+    vol_smooth: float = 0.7,
+    vivid_color: bool = True,
+    device=None,
+) -> str:
+    """
+    Extract a watertight, solid .glb mesh from a 3D Gaussian Splat PLY file.
+    """
+    from plyfile import PlyData
+
+    plydata = PlyData.read(ply_path)
+    vertex = plydata["vertex"]
+
+    # Coordinates
+    xyz_np = np.column_stack([vertex["x"], vertex["y"], vertex["z"]]).astype(np.float32)
+
+    # Note: PLY written by save_ply has already been converted to Y-up: (x, -z, y).
+    # To run splat_to_mesh in native Z-up: (x, z, -y)
+    xyz_zup = np.stack([xyz_np[:, 0], xyz_np[:, 2], -xyz_np[:, 1]], axis=1)
+
+    # Opacities
+    if "opacity" in vertex.data.dtype.names:
+        raw_op = vertex["opacity"]
+        if raw_op.min() < 0 or raw_op.max() > 1:
+            opacities = 1.0 / (1.0 + np.exp(-raw_op))
+        else:
+            opacities = raw_op
+    else:
+        opacities = np.ones(len(xyz_zup), dtype=np.float32)
+
+    # Scales
+    if all(k in vertex.data.dtype.names for k in ("scale_0", "scale_1", "scale_2")):
+        raw_s = np.column_stack([vertex["scale_0"], vertex["scale_1"], vertex["scale_2"]])
+        scales = np.exp(raw_s).astype(np.float32)
+    else:
+        scales = np.full((len(xyz_zup), 3), 0.01, dtype=np.float32)
+
+    # Rotations
+    if all(k in vertex.data.dtype.names for k in ("rot_0", "rot_1", "rot_2", "rot_3")):
+        quats = np.column_stack([vertex["rot_0"], vertex["rot_1"], vertex["rot_2"], vertex["rot_3"]]).astype(np.float32)
+    else:
+        quats = np.tile([1.0, 0.0, 0.0, 0.0], (len(xyz_zup), 1)).astype(np.float32)
+
+    # Colors
+    if all(k in vertex.data.dtype.names for k in ("f_dc_0", "f_dc_1", "f_dc_2")):
+        sh_dc = np.column_stack([vertex["f_dc_0"], vertex["f_dc_1"], vertex["f_dc_2"]])
+        rgb = np.clip(sh_dc * _C0 + 0.5, 0.0, 1.0).astype(np.float32)
+    elif all(k in vertex.data.dtype.names for k in ("red", "green", "blue")):
+        rgb = (np.column_stack([vertex["red"], vertex["green"], vertex["blue"]]) / 255.0).astype(np.float32)
+    else:
+        rgb = np.full((len(xyz_zup), 3), 0.5, dtype=np.float32)
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    out = splat_to_mesh(
+        xyz=torch.from_numpy(xyz_zup).to(device=device, dtype=torch.float32),
+        opacity=torch.from_numpy(opacities).to(device=device, dtype=torch.float32),
+        scale=torch.from_numpy(scales).to(device=device, dtype=torch.float32),
+        quat=torch.from_numpy(quats).to(device=device, dtype=torch.float32),
+        rgb=torch.from_numpy(rgb).to(device=device, dtype=torch.float32),
+        resolution=int(grid_resolution),
+        device=device,
+        vol_smooth=vol_smooth,
+        vivid_color=vivid_color,
+    )
+
+    if out is None:
+        raise RuntimeError(f"Could not extract surface from PLY: {ply_path}")
+
+    verts, faces, colors = out
+    # Convert Z-up to standard Y-up
+    verts = np.stack([verts[:, 0], -verts[:, 2], verts[:, 1]], axis=1)
+
+    rgba = np.hstack([
+        (np.clip(colors, 0.0, 1.0) * 255).astype(np.uint8),
+        np.full((len(verts), 1), 255, dtype=np.uint8),
+    ])
+
+    mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=rgba)
+    try:
+        trimesh.repair.fill_holes(mesh)
+    except Exception as exc:
+        logger.debug(f"fill_holes: {exc}")
+
+    mesh.export(output_glb_path, file_type="glb")
+    return output_glb_path
