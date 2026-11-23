@@ -573,7 +573,7 @@ def _close_holes(verts, faces, colors, maxholesize: int = 1000000):
     """
     Cap open boundary holes using PyMeshLab so the mesh is completely watertight.
     Even large openings (base, under-armor) are triangulated and closed.
-    Handles non-manifold edges via uniform volumetric resampling fallback.
+    Handles non-manifold edges via repair before closing.
     Colors are mapped from nearest original vertices.
     """
     try:
@@ -584,15 +584,13 @@ def _close_holes(verts, faces, colors, maxholesize: int = 1000000):
         try:
             ms.meshing_close_holes(maxholesize=int(maxholesize))
         except Exception:
-            # Non-manifold edges block close_holes — fix with uniform remesh first
+            # Non-manifold edges block close_holes — repair topology first
             try:
-                ms.generate_resampled_uniform_mesh(
-                    cellsize=ml.PercentageValue(0.8),
-                    offset=ml.PercentageValue(50.0),
-                    mergeclosevert=True)
+                ms.meshing_repair_non_manifold_edges(method=0)
+                ms.meshing_repair_non_manifold_vertices()
                 ms.meshing_close_holes(maxholesize=int(maxholesize))
             except Exception as exc2:
-                print(f"[splat_mesh] close_holes remesh fallback skipped: {exc2}")
+                print(f"[splat_mesh] close_holes after repair skipped: {exc2}")
                 return verts, faces, colors
         m = ms.current_mesh()
         v2 = m.vertex_matrix().astype(np.float32)
