@@ -53,6 +53,27 @@ except ImportError:
                 raise GenerationCancelled("Generation cancelled by user.")
 
 
+def _ensure_hf_token():
+    """Ensure Hugging Face token is set in environment if available."""
+    if os.environ.get("HF_TOKEN"):
+        return
+    token_file = Path.home() / ".cache" / "huggingface" / "token"
+    if token_file.is_file():
+        os.environ["HF_TOKEN"] = token_file.read_text(encoding="utf-8").strip()
+
+
+def _get_encoder_overrides() -> Optional[dict]:
+    """Check if Meta DINOv3 is accessible; if awaiting review, use open mirror."""
+    from huggingface_hub import auth_check
+    overrides = {}
+    try:
+        auth_check("facebook/dinov3-vith16plus-pretrain-lvd1689m")
+    except Exception:
+        logger.info("Official Meta DINOv3 awaiting access review; using verified open mirror.")
+        overrides["dinov3"] = "cocktailpeanut/dinov3-vith16plus-pretrain-lvd1689m"
+    return overrides if overrides else None
+
+
 def _pick_device() -> str:
     """Best available torch device: CUDA, Apple Silicon MPS, or CPU."""
     import torch
@@ -95,6 +116,9 @@ class IdolGenerator(BaseGenerator):
         if self.device is None:
             self.device = _pick_device()
 
+        _ensure_hf_token()
+        encoder_overrides = _get_encoder_overrides()
+
         logger.info(f"Loading IDOL pipeline on device {self.device}...")
 
         if not self.is_downloaded() and hasattr(self, "_auto_download"):
@@ -110,10 +134,18 @@ class IdolGenerator(BaseGenerator):
 
         if weights_path:
             logger.info(f"Loading IDOL from local weights: {weights_path}")
-            self._pipeline = IdolPipeline.from_pretrained(weights_path, device=self.device)
+            self._pipeline = IdolPipeline.from_pretrained(
+                weights_path,
+                device=self.device,
+                image_encoders=encoder_overrides
+            )
         else:
             logger.info("Loading IDOL from HuggingFace (speridlabs/idol)...")
-            self._pipeline = IdolPipeline.from_pretrained("speridlabs/idol", device=self.device)
+            self._pipeline = IdolPipeline.from_pretrained(
+                "speridlabs/idol",
+                device=self.device,
+                image_encoders=encoder_overrides
+            )
 
         logger.info("IDOL pipeline successfully loaded.")
 
