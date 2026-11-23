@@ -8,7 +8,7 @@
   "author": "omaquu",
   "generator_class": "IdolGenerator",
   "vram_gb": 8,
-  "tags": ["image-to-3d", "gaussian-splatting", "mesh", "fast"],
+  "tags": ["image-to-3d", "gaussian-splatting", "mesh", "fast", "projection"],
   "nodes": [
     {
       "id": "generate",
@@ -124,6 +124,119 @@
             {"value": 1048576, "label": "1M (Maximum)"}
           ],
           "tooltip": "Number of 3D Gaussians to generate."
+        },
+        {
+          "id": "seed",
+          "label": "Seed",
+          "type": "int",
+          "default": 42,
+          "min": -1,
+          "max": 2147483647,
+          "tooltip": "Random seed (-1 for random)."
+        }
+      ]
+    },
+    {
+      "id": "projection",
+      "name": "IDOL (Projection)",
+      "input": "image",
+      "inputs": [
+        "image",
+        "mesh"
+      ],
+      "output": "mesh",
+      "hf_repo": "speridlabs/idol",
+      "download_check": "../generate/denoiser.safetensors",
+      "hf_skip_prefixes": [],
+      "params_schema": [
+        {
+          "id": "colorize_mode",
+          "label": "Color Projection",
+          "type": "select",
+          "default": "Aligned (ICP)",
+          "options": [
+            {
+              "value": "Direct",
+              "label": "Direct (fast)"
+            },
+            {
+              "value": "Aligned (ICP)",
+              "label": "Aligned (ICP)"
+            }
+          ],
+          "tooltip": "Projects color from the splat onto the wired mesh. Aligned (ICP) auto-aligns orientation and registers residual misalignment."
+        },
+        {
+          "id": "color_boost",
+          "label": "Color Boost",
+          "type": "select",
+          "default": "Vivid + Bright",
+          "options": [
+            {
+              "value": "Natural",
+              "label": "Natural"
+            },
+            {
+              "value": "Vivid",
+              "label": "Vivid"
+            },
+            {
+              "value": "Bright",
+              "label": "Bright"
+            },
+            {
+              "value": "Vivid + Bright",
+              "label": "Vivid + Bright"
+            }
+          ],
+          "tooltip": "Boost saturation and brightness of projected colors."
+        },
+        {
+          "id": "mode",
+          "label": "Input Mode",
+          "type": "select",
+          "default": "synthetic",
+          "options": [
+            {
+              "value": "synthetic",
+              "label": "Synthetic / Render / AI"
+            },
+            {
+              "value": "real",
+              "label": "Real Photograph"
+            }
+          ],
+          "tooltip": "Input mode for the secondary photo."
+        },
+        {
+          "id": "steps",
+          "label": "Sampling Steps",
+          "type": "int",
+          "default": 30,
+          "min": 10,
+          "max": 60,
+          "tooltip": "Sampling steps for the secondary splat."
+        },
+        {
+          "id": "num_gaussians",
+          "label": "Gaussians",
+          "type": "select",
+          "default": 131072,
+          "options": [
+            {
+              "value": 65536,
+              "label": "65k"
+            },
+            {
+              "value": 131072,
+              "label": "131k"
+            },
+            {
+              "value": 262144,
+              "label": "262k"
+            }
+          ],
+          "tooltip": "Number of Gaussians to generate."
         },
         {
           "id": "seed",

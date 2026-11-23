@@ -44,10 +44,11 @@ This repository is packaged as an official **Modly extension** and can also be u
 4. Click **Install**. Modly will set up the isolated Python virtual environment and register the extension.
 
 ### 2. Available Modly Nodes
-Once installed, IDOL adds two nodes to your workflow canvas:
+Once installed, IDOL adds three nodes to your workflow canvas:
 
 * **IDOL (Mesh)**: Converts an input image into a watertight, vertex-colored `.glb` 3D mesh ready for 3D printing, game engines, or rendering.
 * **IDOL (Gaussian Splat)**: Generates a high-density `.ply` 3D Gaussian Splat point cloud (up to 1,048,576 Gaussians) for real-time volumetric viewing.
+* **IDOL (Projection)**: Multi-view color projection node. Wire an existing 3D mesh (e.g. from `IDOL (Mesh)`) and a secondary photo (e.g. back view or side view). It generates a secondary point cloud and transfers colors onto the mesh using 3D orientation alignment, optional ICP registration, and normal-aware color transfer.
 
 ### 3. Parameters in Modly
 

@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from typing import Optional, Callable, Union
 
+import numpy as np
 from PIL import Image
 
 # Setup logging
@@ -167,6 +168,89 @@ class IdolGenerator(BaseGenerator):
         except Exception:
             pass
 
+    def _run_projection(
+        self,
+        image: Image.Image,
+        params: dict,
+        progress_cb: Optional[Callable[[int, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Path:
+        """
+        Projection Node: Project colors from a secondary photo onto an existing 3D mesh.
+        """
+        import torch
+        import trimesh
+        from colorize import colorize_from_points, _C0
+
+        mesh_path = str(params.get("mesh_path", "")).strip()
+        if not mesh_path:
+            raise ValueError("The Projection node needs a mesh input — wire a 3D mesh node into it.")
+
+        workspace_dir = self.outputs_dir.parent
+        mp = Path(mesh_path)
+        if mesh_path.startswith("/workspace/"):
+            mesh_path = str(workspace_dir / mesh_path[len("/workspace/"):])
+        elif not mp.is_absolute():
+            mesh_path = str(workspace_dir / mesh_path)
+
+        self._report(progress_cb, 5, "Loading input mesh...")
+        mesh = trimesh.load(mesh_path, force="mesh")
+        if not isinstance(mesh, trimesh.Trimesh) or len(mesh.vertices) == 0:
+            raise ValueError(f"Could not load valid triangle mesh from: {mesh_path}")
+
+        # Parameters for secondary splat
+        mode = params.get("mode", "synthetic")
+        steps = int(params.get("steps", 30))
+        num_gaussians = int(params.get("num_gaussians", 131072))
+        cfg_strength = float(params.get("cfg_strength", 3.0))
+        colorize_mode = str(params.get("colorize_mode", "Aligned (ICP)"))
+        use_icp = "ICP" in colorize_mode
+        color_boost = str(params.get("color_boost", "Vivid + Bright"))
+        seed = int(params.get("seed", 42))
+
+        if seed < 0:
+            seed = int(torch.randint(0, 2**31 - 1, (1,)).item())
+
+        self._report(progress_cb, 15, "Generating secondary 3D Gaussians from image...")
+        self._check_cancelled(cancel_event)
+
+        output = self._pipeline(
+            image=image,
+            mode=mode,
+            seed=seed,
+            steps=steps,
+            cfg_strength=cfg_strength,
+            num_gaussians=num_gaussians,
+            verbose=False,
+        )
+
+        self._check_cancelled(cancel_event)
+        self._report(progress_cb, 80, f"Projecting color onto mesh ({'ICP' if use_icp else 'Direct'})...")
+
+        xyz = output.gaussian.xyz.detach().cpu().numpy()
+        opacity = output.gaussian.opacity.detach().cpu().numpy().reshape(-1)
+        f_dc = output.gaussian.features_dc.detach().squeeze(1).cpu().numpy()
+        rgb = np.clip(f_dc * _C0 + 0.5, 0.0, 1.0)
+
+        mesh = colorize_from_points(
+            mesh=mesh,
+            src_xyz=xyz,
+            src_rgb=rgb,
+            opacity=opacity,
+            use_icp=use_icp,
+            pre_rotate=True,
+            color_boost=color_boost,
+        )
+
+        self._check_cancelled(cancel_event)
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        base_id = f"idol_proj_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        out_glb_path = self.outputs_dir / f"{base_id}.glb"
+        mesh.export(str(out_glb_path), file_type="glb")
+
+        self._report(progress_cb, 100, "Color projection complete!")
+        return out_glb_path
+
     def generate(
         self,
         image_bytes: Union[bytes, str, Image.Image],
@@ -206,7 +290,12 @@ class IdolGenerator(BaseGenerator):
 
         self._check_cancelled(cancel_event)
 
-        # Extract parameters
+        # Route to Projection node if selected
+        node_id = self.model_dir.name if self.model_dir else "generate"
+        if node_id == "projection":
+            return self._run_projection(image, params, progress_cb, cancel_event)
+
+        # Extract parameters for standard generation
         mode = params.get("mode", "synthetic")
         steps = int(params.get("steps", 30))
         num_gaussians = int(params.get("num_gaussians", 131072))
@@ -247,7 +336,6 @@ class IdolGenerator(BaseGenerator):
         output.gaussian.save_ply(str(ply_path))
 
         # Check node type: "createSplat" returns .ply, "generate" returns .glb mesh
-        node_id = self.model_dir.name if self.model_dir else "generate"
         if node_id == "createSplat":
             self._report(progress_cb, 100, "Gaussian Splat complete!")
             return ply_path
