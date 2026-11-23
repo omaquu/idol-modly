@@ -13,8 +13,6 @@ import threading
 from pathlib import Path
 from typing import Optional, Callable, Union
 
-import numpy as np
-import torch
 from PIL import Image
 
 # Setup logging
@@ -55,8 +53,14 @@ except ImportError:
                 raise GenerationCancelled("Generation cancelled by user.")
 
 
-# Import splat_mesh converter
-from splat_mesh import gaussian_object_to_glb, extract_mesh_from_ply
+def _pick_device() -> str:
+    """Best available torch device: CUDA, Apple Silicon MPS, or CPU."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class IdolGenerator(BaseGenerator):
@@ -66,38 +70,42 @@ class IdolGenerator(BaseGenerator):
 
     def __init__(self, model_dir: Optional[Union[str, Path]] = None, outputs_dir: Optional[Union[str, Path]] = None):
         super().__init__(model_dir, outputs_dir)
-        self.device = "cuda" if torch.cuda.is_available() else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
+        self.device = None
         self._pipeline = None
 
+    def _weights_dir(self) -> Path:
+        """Find weights directory, reusing 'generate' node directory if available."""
+        if self.model_dir.name == "generate":
+            return self.model_dir
+        shared = self.model_dir.parent / "generate"
+        if (shared / "denoiser.safetensors").exists():
+            return shared
+        return self.model_dir
+
     def is_downloaded(self) -> bool:
-        """Check if model weights exist locally in self.model_dir."""
-        if not self.model_dir.exists():
-            return False
-        # Check for denoiser weights in current or parent directory
-        if (self.model_dir / "denoiser.safetensors").exists():
-            return True
-        parent_generate = self.model_dir.parent / "generate" / "denoiser.safetensors"
-        if parent_generate.exists():
-            return True
-        return False
+        """Check if model weights exist locally."""
+        return (self._weights_dir() / "denoiser.safetensors").exists()
 
     def load(self) -> None:
         """Load the IDOL pipeline into memory."""
         if self._pipeline is not None:
             return
 
+        import torch
+        if self.device is None:
+            self.device = _pick_device()
+
         logger.info(f"Loading IDOL pipeline on device {self.device}...")
 
-        # Find weights directory
-        weights_path = None
-        if (self.model_dir / "denoiser.safetensors").exists():
-            weights_path = str(self.model_dir)
-        else:
-            parent_gen = self.model_dir.parent / "generate"
-            if (parent_gen / "denoiser.safetensors").exists():
-                weights_path = str(parent_gen)
+        if not self.is_downloaded() and hasattr(self, "_auto_download"):
+            self._auto_download()
 
-        # Import IdolPipeline from bundled idol package
+        weights_path = None
+        wd = self._weights_dir()
+        if (wd / "denoiser.safetensors").exists():
+            weights_path = str(wd)
+
+        # Import IdolPipeline from idol package
         from idol.pipeline import IdolPipeline
 
         if weights_path:
@@ -113,9 +121,13 @@ class IdolGenerator(BaseGenerator):
         """Unload the model and free GPU memory."""
         logger.info("Unloading IDOL model...")
         self._pipeline = None
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
     def generate(
         self,
@@ -133,6 +145,9 @@ class IdolGenerator(BaseGenerator):
         :param cancel_event: Optional threading.Event to signal cancellation.
         :return: Path to the generated output file (.glb or .ply).
         """
+        import torch
+        from splat_mesh import gaussian_object_to_glb, extract_mesh_from_ply
+
         self._check_cancelled(cancel_event)
         self._report(progress_cb, 5, "Preparing input image...")
 
