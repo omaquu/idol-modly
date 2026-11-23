@@ -16,6 +16,7 @@ pre-boosts saturation. The glTF Y/Z flip is handled by the caller.
 """
 import numpy as np
 import torch
+from pathlib import Path
 from scipy.ndimage import (map_coordinates, minimum as _ndi_min, maximum as _ndi_max,
                            distance_transform_edt, binary_fill_holes)
 from scipy.sparse import coo_matrix
@@ -572,8 +573,10 @@ def splat_to_mesh(xyz, opacity, scale, quat, rgb, *, resolution, device,
 def _close_holes(verts, faces, colors, maxholesize: int = 1000000):
     """
     Cap open boundary holes using PyMeshLab so the mesh is completely watertight.
-    Even large openings (base, under-armor) are triangulated and closed.
-    Handles non-manifold edges via repair before closing.
+    The raw Surface Nets dual-contour surface already has ~0 open boundaries;
+    close_holes is a safe cap for any small boundary gaps.
+    NOTE: Never call meshing_repair_non_manifold_edges() on dual-contour surfaces
+    as it splits non-manifold edges into thousands of open boundary holes.
     Colors are mapped from nearest original vertices.
     """
     try:
@@ -584,76 +587,188 @@ def _close_holes(verts, faces, colors, maxholesize: int = 1000000):
         try:
             ms.meshing_close_holes(maxholesize=int(maxholesize))
         except Exception:
-            # Non-manifold edges block close_holes — repair topology first
-            try:
-                ms.meshing_repair_non_manifold_edges(method=0)
-                ms.meshing_repair_non_manifold_vertices()
-                ms.meshing_close_holes(maxholesize=int(maxholesize))
-            except Exception as exc2:
-                print(f"[splat_mesh] close_holes after repair skipped: {exc2}")
-                return verts, faces, colors
+            # Safe no-op: raw Surface Nets surface already has 0 open boundaries
+            return verts, faces, colors
         m = ms.current_mesh()
         v2 = m.vertex_matrix().astype(np.float32)
         f2 = m.face_matrix().astype(np.int64)
         _, idx = cKDTree(verts).query(v2, k=1)
         return v2, f2, colors[idx]
-    except Exception as exc:
-        print(f"[splat_mesh] close_holes skipped: {exc}")
+    except Exception:
         return verts, faces, colors
 
 
-def gaussian_object_to_glb(
+_RES_MAP = {7: 128, 8: 160, 9: 224, 10: 288, 128: 128, 160: 160, 224: 224, 256: 256, 288: 288}
+_TEX_MAP = {"Auto": "auto", "auto": "auto", "Vertex colors": None, "vertex": None, "Baked 1K": 1024, "Baked 2K": 2048, 1024: 1024, 2048: 2048}
+_SMOOTH_MAP = {"None": 0, "Light": 6, "Medium": 12, "Strong": 18, 0: 0, 6: 6, 12: 12, 18: 18}
+_FLIP = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)
+
+
+def _prep_texture_geometry(verts, faces, target=50000):
+    """Volumetric remesh to manifold + decimate to target faces for safe xatlas unwrapping."""
+    import pymeshlab as ml
+    ms = ml.MeshSet()
+    ms.add_mesh(ml.Mesh(vertex_matrix=verts.astype(np.float64),
+                        face_matrix=faces.astype(np.int32)))
+    try:
+        ms.generate_resampled_uniform_mesh(
+            cellsize=ml.PercentageValue(100.0 / 160.0),
+            offset=ml.PercentageValue(50.0), mergeclosevert=True)
+    except Exception:
+        pass
+    if ms.current_mesh().face_number() > int(target):
+        ms.meshing_decimation_quadric_edge_collapse(targetfacenum=int(target), preservetopology=True)
+    cm = ms.current_mesh()
+    return (np.ascontiguousarray(cm.vertex_matrix(), np.float32),
+            np.ascontiguousarray(cm.face_matrix(), np.int64))
+
+
+def _build_textured_mesh(nv, nf, uvs, tex, flip):
+    """Z-up baked candidate -> Y-up textured trimesh (glTF-ready PBR)."""
+    import trimesh
+    from PIL import Image
+    from trimesh.visual import TextureVisuals
+    from trimesh.visual.material import PBRMaterial
+    nv = (nv @ flip).astype(np.float32)
+    img = Image.fromarray(tex)
+    material = PBRMaterial(baseColorTexture=img, metallicFactor=0.0, roughnessFactor=1.0)
+    return trimesh.Trimesh(vertices=nv, faces=nf,
+                           visual=TextureVisuals(uv=uvs, material=material),
+                           process=False)
+
+
+def _bake_candidate(verts, faces, g, tex_res, dev, vivid_color, color_refine):
+    """Prep + unwrap + bake (+ optional render-supervised refine)."""
+    from texture_bake import bake_texture
+    _TEX_FACE_CAP = 50000
+    verts, faces = _prep_texture_geometry(verts, faces, _TEX_FACE_CAP)
+    nv, nf, uvs, tex = bake_texture(verts, faces, g, tex_res, dev, vivid_color)
+    if color_refine:
+        try:
+            from splatforge.render.color_opt import refine_texture_production
+            tex = refine_texture_production(nv, nf, uvs, tex, g, dev)
+        except Exception as exc:
+            print(f"[splat_mesh] Texture refine skipped: {exc}")
+    return nv, nf, uvs, tex, g
+
+
+def load_splat_file(path: str, device="cuda" if torch.cuda.is_available() else "cpu"):
+    """Load Gaussian parameters from either a .ply or .splat file."""
+    path_str = str(path).strip()
+    p = Path(path_str)
+    if not p.exists():
+        raise FileNotFoundError(f"Splat file not found: {path_str}")
+
+    dev = torch.device(device)
+    if p.suffix.lower() == ".splat":
+        data = p.read_bytes()
+        n = len(data) // 32
+        raw = np.frombuffer(data, dtype=np.uint8).reshape(n, 32)
+        pos = raw[:, :12].view(np.float32).reshape(n, 3)
+        scale = raw[:, 12:24].view(np.float32).reshape(n, 3)
+        rgba = raw[:, 24:28].astype(np.float32) / 255.0
+        rgb = rgba[:, :3]
+        opacity = rgba[:, 3]
+        rot = (raw[:, 28:32].astype(np.float32) - 128.0) / 128.0
+
+        return {
+            "xyz": torch.as_tensor(pos, dtype=torch.float32, device=dev),
+            "scale": torch.as_tensor(scale, dtype=torch.float32, device=dev),
+            "opacity": torch.as_tensor(opacity, dtype=torch.float32, device=dev),
+            "quat": torch.as_tensor(rot, dtype=torch.float32, device=dev),
+            "rgb": torch.as_tensor(rgb, dtype=torch.float32, device=dev),
+        }
+    else:
+        from plyfile import PlyData
+        plydata = PlyData.read(str(p))
+        v = plydata["vertex"]
+        xyz = np.stack([v["x"], v["y"], v["z"]], axis=1)
+        scale = np.exp(np.stack([v["scale_0"], v["scale_1"], v["scale_2"]], axis=1))
+        opacity = 1.0 / (1.0 + np.exp(-v["opacity"]))
+        quat = np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], axis=1)
+        rgb = np.clip(np.stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]], axis=1) * _C0 + 0.5, 0.0, 1.0)
+        return {
+            "xyz": torch.as_tensor(xyz, dtype=torch.float32, device=dev),
+            "scale": torch.as_tensor(scale, dtype=torch.float32, device=dev),
+            "opacity": torch.as_tensor(opacity, dtype=torch.float32, device=dev),
+            "quat": torch.as_tensor(quat, dtype=torch.float32, device=dev),
+            "rgb": torch.as_tensor(rgb, dtype=torch.float32, device=dev),
+        }
+
+
+def reconstruct_gaussian_to_glb(
     gaussian,
     output_glb_path: str,
-    grid_resolution: int = 224,
-    vol_smooth: float = 0.7,
-    vivid_color: bool = True,
-    taubin: int = 12,
-    use_repair: bool = True,
+    mesh_detail = 9,
+    mesh_smoothing = "Medium",
+    color_mode: str = "Refined",
+    texture: str = "Auto",
+    device = None,
 ) -> str:
     """
-    Extract a watertight, solid .glb mesh directly from an Idol Gaussian instance.
-    Uses TSDF multi-view depth repair + Surface Nets + PyMeshLab hole closure.
+    Full TripoSplat-grade mesh reconstruction from Gaussians:
+    - TSDF multi-view depth repair
+    - PyMeshLab hole-closing
+    - DepthFit (depth-supervised geometry smoothing)
+    - Color refinement (render-supervised)
+    - 2K Texture Baking via xatlas UV unwrapping
     """
     import trimesh
-    from pathlib import Path
 
-    device = gaussian.xyz.device
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
 
-    xyz = gaussian.xyz.detach().float()
-    scale = gaussian.scaling.detach().float()
-    opacity = gaussian.opacity.detach().reshape(-1).float()
-    quat = gaussian.rotation.detach().float()
-    rgb = (gaussian.features_dc[:, 0, :].detach().float() * _C0 + 0.5).clamp(0, 1)
+    # Extract tensors
+    if isinstance(gaussian, (str, Path)):
+        g_data = load_splat_file(str(gaussian), device=device)
+        xyz = g_data["xyz"]
+        scale = g_data["scale"]
+        opacity = g_data["opacity"]
+        quat = g_data["quat"]
+        rgb = g_data["rgb"]
+    elif isinstance(gaussian, dict):
+        xyz = gaussian["xyz"].detach().float().to(device)
+        scale = gaussian["scale"].detach().float().to(device)
+        opacity = gaussian["opacity"].detach().reshape(-1).float().to(device)
+        quat = gaussian["quat"].detach().float().to(device)
+        rgb = gaussian["rgb"].detach().float().to(device)
+    else:
+        xyz = gaussian.xyz.detach().float().to(device)
+        scale = gaussian.scaling.detach().float().to(device)
+        opacity = gaussian.opacity.detach().reshape(-1).float().to(device)
+        quat = gaussian.rotation.detach().float().to(device)
+        rgb = (gaussian.features_dc[:, 0, :].detach().float() * _C0 + 0.5).clamp(0, 1).to(device)
 
-    res = int(grid_resolution)
+    res = _RES_MAP.get(int(mesh_detail), 224)
+    taubin = _SMOOTH_MAP.get(str(mesh_smoothing), 12)
+    tex_res = _TEX_MAP.get(str(texture), "auto")
+    tex_auto = (tex_res == "auto")
+    if tex_auto:
+        tex_res = None
+        color_refine = True
+    else:
+        color_refine = (str(color_mode).lower().startswith("refined"))
+    vivid_color = (str(color_mode).lower().startswith("vivid"))
+
+    # Step 1: TSDF Repair Extraction (with standard Surface Nets fallback)
     out = None
-
-    if use_repair:
-        try:
-            from splatforge.tsdf import splat_to_mesh_repair
-            rep_out = splat_to_mesh_repair(
-                xyz.to(device), opacity.to(device), scale.to(device), quat.to(device),
-                rgb.to(device), resolution=res, device=device, taubin=taubin
-            )
-            if rep_out is not None:
-                out = rep_out[0], rep_out[1], rep_out[2]
-        except Exception as exc:
-            print(f"[splat_mesh] repair extraction fallback: {exc}")
+    try:
+        from splatforge.tsdf import splat_to_mesh_repair
+        rep_out = splat_to_mesh_repair(
+            xyz, opacity, scale, quat, rgb, resolution=res, device=device, taubin=taubin
+        )
+        if rep_out is not None:
+            out = rep_out[0], rep_out[1], rep_out[2]
+    except Exception as exc:
+        print(f"[splat_mesh] TSDF repair fallback: {exc}")
 
     if out is None:
         out = splat_to_mesh(
-            xyz=xyz.to(device),
-            opacity=opacity.to(device),
-            scale=scale.to(device),
-            quat=quat.to(device),
-            rgb=rgb.to(device),
-            resolution=res,
-            device=device,
-            vivid_color=vivid_color,
-            taubin=taubin,
-            vol_smooth=vol_smooth,
-            filaments=True,
+            xyz=xyz, opacity=opacity, scale=scale, quat=quat, rgb=rgb,
+            resolution=res, device=device, vivid_color=vivid_color,
+            taubin=taubin, vol_smooth=0.7, filaments=True,
         )
 
     if out is None:
@@ -661,59 +776,138 @@ def gaussian_object_to_glb(
 
     verts, faces, colors = out
 
-    # PyMeshLab hole-closing pass to make armors and boundaries 100% solid
+    # Step 2: Hole closure
     if len(faces) > 0:
         verts, faces, colors = _close_holes(verts, faces, colors)
 
-    # Convert native Z-up to standard glTF/Modly Y-up: (x, -z, y)
-    verts = np.stack([verts[:, 0], -verts[:, 2], verts[:, 1]], axis=1)
+    # Step 3: DepthFit (depth-supervised geometry refinement)
+    if (color_refine or tex_auto) and len(faces) > 0:
+        try:
+            from scipy.spatial import cKDTree as _KD
+            from splatforge.render.geo_opt import refine_geometry
+            from splatforge.render.auto import guard_geometry
+            from splatforge.render.cameras import make_rig as _mk_rig
+            keep = opacity >= 0.02
+            g_geo = {"xyz": xyz[keep], "opacity": opacity[keep],
+                     "scale": scale[keep], "quat": quat[keep], "rgb": rgb[keep]}
+            _xn = g_geo["xyz"].cpu().numpy()
+            _sb = _xn[np.random.default_rng(0).choice(
+                len(_xn), min(20000, len(_xn)), replace=False)]
+            _sp = float(np.median(_KD(_xn).query(_sb, k=2)[0][:, 1]))
+            g_geo["scale"] = g_geo["scale"].clamp_min(0.9 * _sp)
+            _GOLD = float(np.pi * (3.0 - np.sqrt(5.0)))
+            _cams = _mk_rig(np.asarray(verts, np.float32), k=16, res=512,
+                            phase=_GOLD / 2, z_max=0.95)
+            _vt = torch.as_tensor(np.asarray(verts, np.float32), device=device)
+            _ft = torch.as_tensor(np.asarray(faces, np.int64), device=device)
+            _v2 = refine_geometry(_vt, _ft, g_geo, _cams)
+            if guard_geometry(_vt, _v2, _ft, g_geo, device):
+                verts = _v2.cpu().numpy().astype(np.float32)
+        except Exception as exc:
+            print(f"[splat_mesh] DepthFit skipped: {exc}")
 
-    rgba = np.hstack([
-        (np.clip(colors, 0.0, 1.0) * 255).astype(np.uint8),
-        np.full((len(verts), 1), 255, dtype=np.uint8),
-    ])
+    # Step 4: Render-supervised colour refinement (if vertex colors path)
+    if color_refine and not tex_res and len(faces) > 0:
+        try:
+            from splatforge.render.color_opt import refine_colors_production
+            keep = opacity >= 0.02
+            g_cr = {"xyz": xyz[keep], "opacity": opacity[keep],
+                    "scale": scale[keep], "quat": quat[keep], "rgb": rgb[keep]}
+            colors = refine_colors_production(verts, faces, colors, g_cr, device)
+        except Exception as exc:
+            print(f"[splat_mesh] Color refine skipped: {exc}")
 
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=rgba, process=False)
+    # Step 5: Texture "Auto" (bakes 2K candidate & tests if texture beats vertex)
+    keep = opacity >= 0.02
+    g_all = {"xyz": xyz[keep], "opacity": opacity[keep],
+             "scale": scale[keep], "quat": quat[keep], "rgb": rgb[keep]}
+
+    if tex_auto and len(faces) > 0:
+        try:
+            from scipy.spatial import cKDTree as _KD
+            from splatforge.render.auto import pick_color_path
+            nv, nf, uvs, tex, g_cand = _bake_candidate(
+                verts, faces, g_all, 2048, device, False, color_refine=True)
+            _xn = g_cand["xyz"].detach().float().cpu().numpy()
+            _sb = _xn[np.random.default_rng(0).choice(
+                len(_xn), min(20000, len(_xn)), replace=False)]
+            _sp = float(np.median(_KD(_xn).query(_sb, k=2)[0][:, 1]))
+            g_val = {k: v.detach().float().to(device) for k, v in g_cand.items()}
+            g_val["scale"] = g_val["scale"].clamp_min(0.9 * _sp)
+            r = pick_color_path((verts, faces, colors), (nv, nf, uvs, tex), g_val, device)
+            if r.get("winner") == "texture":
+                mesh = _build_textured_mesh(nv, nf, uvs, tex, _FLIP)
+                mesh.export(output_glb_path, file_type="glb")
+                return output_glb_path
+        except Exception as exc:
+            print(f"[splat_mesh] Auto texture skipped: {exc}")
+
+    # Step 6: Baked texture (1K or 2K explicit)
+    if tex_res and len(faces) > 0:
+        try:
+            nv, nf, uvs, tex, _ = _bake_candidate(
+                verts, faces, g_all, int(tex_res), device, vivid_color, color_refine)
+            mesh = _build_textured_mesh(nv, nf, uvs, tex, _FLIP)
+            mesh.export(output_glb_path, file_type="glb")
+            return output_glb_path
+        except Exception as exc:
+            print(f"[splat_mesh] Texture bake failed ({exc}); falling back to vertex colors.")
+
+    # Step 7: Vertex color fallback
+    verts = verts @ _FLIP
+    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    mesh.visual.vertex_colors = np.concatenate(
+        [(np.clip(colors, 0, 1) * 255).astype(np.uint8),
+         np.full((len(colors), 1), 255, dtype=np.uint8)], axis=1)
     mesh.export(output_glb_path, file_type="glb")
     return output_glb_path
+
+
+def gaussian_object_to_glb(
+    gaussian,
+    output_glb_path: str,
+    mesh_detail = 9,
+    grid_resolution = None,
+    mesh_smoothing = "Medium",
+    color_mode = "Refined",
+    texture = "Auto",
+    vivid_color: bool = True,
+    taubin: int = 12,
+    vol_smooth: float = 0.7,
+    use_repair: bool = True,
+) -> str:
+    """Convenience wrapper for reconstruct_gaussian_to_glb."""
+    detail = mesh_detail if grid_resolution is None else grid_resolution
+    c_mode = "Vivid" if vivid_color else color_mode
+    return reconstruct_gaussian_to_glb(
+        gaussian=gaussian,
+        output_glb_path=output_glb_path,
+        mesh_detail=detail,
+        mesh_smoothing=mesh_smoothing,
+        color_mode=c_mode,
+        texture=texture,
+    )
 
 
 def extract_mesh_from_ply(
     ply_path: str,
     output_glb_path: str,
-    grid_resolution: int = 224,
-    vol_smooth: float = 0.7,
-    vivid_color: bool = True,
+    mesh_detail = 9,
+    grid_resolution = None,
+    mesh_smoothing = "Medium",
+    color_mode = "Refined",
+    texture = "Auto",
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    **kwargs,
 ) -> str:
-    """
-    Extract watertight GLB mesh from a saved 3DGS PLY file.
-    """
-    from plyfile import PlyData
-    plydata = PlyData.read(ply_path)
-    v = plydata["vertex"]
-
-    xyz = np.stack([v["x"], v["y"], v["z"]], axis=1)
-    scale = np.exp(np.stack([v["scale_0"], v["scale_1"], v["scale_2"]], axis=1))
-    opacity = 1.0 / (1.0 + np.exp(-v["opacity"]))
-    quat = np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], axis=1)
-    rgb = np.clip(np.stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]], axis=1) * _C0 + 0.5, 0.0, 1.0)
-
-    class _DummyGaussian:
-        pass
-
-    g = _DummyGaussian()
-    dev = torch.device(device)
-    g.xyz = torch.as_tensor(xyz, dtype=torch.float32, device=dev)
-    g.scaling = torch.as_tensor(scale, dtype=torch.float32, device=dev)
-    g.opacity = torch.as_tensor(opacity, dtype=torch.float32, device=dev)
-    g.rotation = torch.as_tensor(quat, dtype=torch.float32, device=dev)
-    g.features_dc = ((torch.as_tensor(rgb, dtype=torch.float32, device=dev) - 0.5) / _C0).unsqueeze(1)
-
-    return gaussian_object_to_glb(
-        g,
+    """Extract watertight, textured GLB mesh from a saved 3DGS PLY or SPLAT file."""
+    detail = mesh_detail if grid_resolution is None else grid_resolution
+    return reconstruct_gaussian_to_glb(
+        gaussian=ply_path,
         output_glb_path=output_glb_path,
-        grid_resolution=grid_resolution,
-        vol_smooth=vol_smooth,
-        vivid_color=vivid_color,
+        mesh_detail=detail,
+        mesh_smoothing=mesh_smoothing,
+        color_mode=color_mode,
+        texture=texture,
+        device=device,
     )

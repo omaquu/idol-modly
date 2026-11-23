@@ -441,7 +441,9 @@ class IdolGenerator(BaseGenerator):
 
         # Route based on node id
         node_id = os.environ.get("MODEL_NODE_ID") or (self.model_dir.name if self.model_dir else "generate")
-        if node_id == "projection":
+        if node_id in ("splat_to_mesh", "splatToMesh"):
+            return self._run_splat_to_mesh(image_bytes, params, progress_cb, cancel_event)
+        elif node_id == "projection":
             return self._run_projection(image, params, progress_cb, cancel_event)
         elif node_id in ("multiview", "generate-mv", "generate-multiview"):
             return self._run_multiview(image, params, progress_cb, cancel_event)
@@ -449,11 +451,11 @@ class IdolGenerator(BaseGenerator):
         # Extract parameters for standard generation
         mode = params.get("mode", "synthetic")
         steps = int(params.get("steps", 30))
-        num_gaussians = int(params.get("num_gaussians", 131072))
-        grid_resolution = int(params.get("grid_resolution", 224))
+        num_gaussians = int(params.get("num_gaussians", 262144))
+        mesh_detail = params.get("mesh_detail", params.get("grid_resolution", 9))
         mesh_smoothing = params.get("mesh_smoothing", "Medium")
-        taubin = {"None": 0, "Light": 6, "Medium": 12, "Strong": 18}.get(mesh_smoothing, 12)
-        vivid_color = params.get("color_mode", "Vivid") == "Vivid"
+        color_mode = params.get("color_mode", "Refined")
+        texture = params.get("texture", "Auto")
         cfg_strength = float(params.get("cfg_strength", 3.0))
         seed = int(params.get("seed", 42))
 
@@ -494,6 +496,8 @@ class IdolGenerator(BaseGenerator):
         except Exception as exc:
             logger.warning(f"Failed to write .splat sidecar: {exc}")
 
+        from splat_mesh import reconstruct_gaussian_to_glb, gaussian_object_to_glb, extract_mesh_from_ply
+
         # For "createSplat": save splat files (.ply + .splat) AND create companion .glb preview
         # so Modly's Library tab generates a 3D thumbnail and allows clicking/opening!
         if node_id == "createSplat":
@@ -502,9 +506,9 @@ class IdolGenerator(BaseGenerator):
                 gaussian_object_to_glb(
                     gaussian=output.gaussian,
                     output_glb_path=str(glb_path),
-                    grid_resolution=min(grid_resolution, 192),
-                    vivid_color=True,
-                    taubin=12,
+                    mesh_detail=8,
+                    color_mode="Vivid",
+                    texture="Vertex colors",
                 )
                 logger.info(f"Companion preview GLB written to {glb_path.name}")
                 self._report(progress_cb, 100, "Gaussian Splat complete (Library preview ready)!")
@@ -514,27 +518,96 @@ class IdolGenerator(BaseGenerator):
                 self._report(progress_cb, 100, "Gaussian Splat complete!")
                 return ply_path
 
-        # Mesh extraction for "generate" node (IDOL Mesh)
-        self._report(progress_cb, 80, f"Reconstructing high-detail watertight mesh (grid={grid_resolution}, taubin={taubin})...")
+        # Mesh extraction for "generate" node (IDOL Mesh) with full 2K Texture Baking
+        self._report(progress_cb, 80, f"Reconstructing mesh & baking textures (detail={mesh_detail}, texture={texture})...")
         self._check_cancelled(cancel_event)
 
         try:
-            gaussian_object_to_glb(
+            reconstruct_gaussian_to_glb(
                 gaussian=output.gaussian,
                 output_glb_path=str(glb_path),
-                grid_resolution=grid_resolution,
-                vivid_color=vivid_color,
-                taubin=taubin,
+                mesh_detail=mesh_detail,
+                mesh_smoothing=mesh_smoothing,
+                color_mode=color_mode,
+                texture=texture,
             )
         except Exception as e:
             logger.warning(f"Direct mesh extraction error: {e}. Falling back to PLY reconstruction...")
             extract_mesh_from_ply(
                 ply_path=str(ply_path),
                 output_glb_path=str(glb_path),
-                grid_resolution=grid_resolution,
-                vivid_color=vivid_color,
+                mesh_detail=mesh_detail,
+                mesh_smoothing=mesh_smoothing,
+                color_mode=color_mode,
+                texture=texture,
             )
 
         self._check_cancelled(cancel_event)
         self._report(progress_cb, 100, "Generation complete!")
         return glb_path
+
+    def _run_splat_to_mesh(self, input_data, params: dict, progress_cb, cancel_event) -> Path:
+        """
+        Convert an existing Gaussian Splat (.ply or .splat) into a high-quality watertight
+        textured .glb mesh without re-running AI diffusion sampling.
+        Connectable directly to downstream nodes like Prepare for Game.
+        """
+        from splat_mesh import reconstruct_gaussian_to_glb
+
+        self._check_cancelled(cancel_event)
+        self._report(progress_cb, 10, "Locating Gaussian splat input...")
+
+        splat_path = None
+        if isinstance(input_data, str) and (input_data.lower().endswith(".ply") or input_data.lower().endswith(".splat")):
+            splat_path = Path(input_data)
+        elif isinstance(input_data, Path) and (input_data.suffix.lower() in (".ply", ".splat")):
+            splat_path = input_data
+        elif isinstance(params.get("mesh_path"), str) and params.get("mesh_path").strip():
+            splat_path = Path(params["mesh_path"].strip())
+        elif isinstance(params.get("input_path"), str) and params.get("input_path").strip():
+            splat_path = Path(params["input_path"].strip())
+        elif isinstance(input_data, bytes):
+            self.outputs_dir.mkdir(parents=True, exist_ok=True)
+            # Detect header
+            is_splat = (len(input_data) % 32 == 0) and not input_data[:10].startswith(b"ply")
+            ext = ".splat" if is_splat else ".ply"
+            temp_in = self.outputs_dir / f"input_{int(time.time())}{ext}"
+            temp_in.write_bytes(input_data)
+            splat_path = temp_in
+
+        # Fallback: scan workspace for most recent .ply or .splat if path wasn't passed directly
+        if not splat_path or not splat_path.exists():
+            workspace_dir = getattr(self, "workspace_dir", None) or self.outputs_dir.parent
+            recent_splats = sorted(list(workspace_dir.glob("**/*.ply")) + list(workspace_dir.glob("**/*.splat")),
+                                   key=lambda p: p.stat().st_mtime, reverse=True)
+            if recent_splats:
+                splat_path = recent_splats[0]
+                logger.info(f"Using most recent workspace splat: {splat_path}")
+
+        if not splat_path or not splat_path.exists():
+            raise ValueError(f"No valid .ply or .splat file found for Splat to Mesh. Provided: {input_data}")
+
+        mesh_detail = params.get("mesh_detail", 9)
+        mesh_smoothing = params.get("mesh_smoothing", "Medium")
+        color_mode = params.get("color_mode", "Refined")
+        texture = params.get("texture", "Auto")
+
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        base_id = f"{splat_path.stem}_mesh"
+        out_glb = self.outputs_dir / f"{base_id}.glb"
+
+        self._report(progress_cb, 30, f"Reconstructing mesh & baking textures (detail={mesh_detail}, texture={texture})...")
+        self._check_cancelled(cancel_event)
+
+        reconstruct_gaussian_to_glb(
+            gaussian=str(splat_path),
+            output_glb_path=str(out_glb),
+            mesh_detail=mesh_detail,
+            mesh_smoothing=mesh_smoothing,
+            color_mode=color_mode,
+            texture=texture,
+        )
+
+        self._check_cancelled(cancel_event)
+        self._report(progress_cb, 100, f"Mesh ready: {out_glb.name}")
+        return out_glb
