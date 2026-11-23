@@ -99,6 +99,8 @@ def setup(
         "scipy",
         "scikit-image",
         "einops",
+        "pymeshlab",
+        "xatlas",
     )
 
     # 4. Install the idol package itself in editable mode without reinstalling deps

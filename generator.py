@@ -270,7 +270,9 @@ class IdolGenerator(BaseGenerator):
         mode = params.get("mode", "synthetic")
         steps = int(params.get("steps", 30))
         num_gaussians = int(params.get("num_gaussians", 131072))
-        grid_resolution = int(params.get("grid_resolution", 160))
+        grid_resolution = int(params.get("grid_resolution", 224))
+        mesh_smoothing = params.get("mesh_smoothing", "Medium")
+        taubin = {"None": 0, "Light": 6, "Medium": 12, "Strong": 18}.get(mesh_smoothing, 12)
         cfg_strength = float(params.get("cfg_strength", 3.0))
         colorize_mode = str(params.get("colorize_mode", "Aligned (ICP)"))
         use_icp = "ICP" in colorize_mode
@@ -314,6 +316,8 @@ class IdolGenerator(BaseGenerator):
             front_output.gaussian,
             str(temp_mesh_path),
             grid_resolution=grid_resolution,
+            taubin=taubin,
+            vivid_color=True,
         )
 
         mesh = trimesh.load(str(temp_mesh_path), force="mesh")
@@ -446,7 +450,10 @@ class IdolGenerator(BaseGenerator):
         mode = params.get("mode", "synthetic")
         steps = int(params.get("steps", 30))
         num_gaussians = int(params.get("num_gaussians", 131072))
-        grid_resolution = int(params.get("grid_resolution", 160))
+        grid_resolution = int(params.get("grid_resolution", 224))
+        mesh_smoothing = params.get("mesh_smoothing", "Medium")
+        taubin = {"None": 0, "Light": 6, "Medium": 12, "Strong": 18}.get(mesh_smoothing, 12)
+        vivid_color = params.get("color_mode", "Vivid") == "Vivid"
         cfg_strength = float(params.get("cfg_strength", 3.0))
         seed = int(params.get("seed", 42))
 
@@ -487,13 +494,28 @@ class IdolGenerator(BaseGenerator):
         except Exception as exc:
             logger.warning(f"Failed to write .splat sidecar: {exc}")
 
-        # Check node type: "createSplat" returns .ply (or .splat)
+        # For "createSplat": save splat files (.ply + .splat) AND create companion .glb preview
+        # so Modly's Library tab generates a 3D thumbnail and allows clicking/opening!
         if node_id == "createSplat":
-            self._report(progress_cb, 100, "Gaussian Splat complete!")
-            return ply_path
+            self._report(progress_cb, 85, "Generating Library 3D preview (.glb)...")
+            try:
+                gaussian_object_to_glb(
+                    gaussian=output.gaussian,
+                    output_glb_path=str(glb_path),
+                    grid_resolution=min(grid_resolution, 192),
+                    vivid_color=True,
+                    taubin=12,
+                )
+                logger.info(f"Companion preview GLB written to {glb_path.name}")
+                self._report(progress_cb, 100, "Gaussian Splat complete (Library preview ready)!")
+                return glb_path
+            except Exception as exc:
+                logger.warning(f"Failed to generate companion GLB: {exc}")
+                self._report(progress_cb, 100, "Gaussian Splat complete!")
+                return ply_path
 
-        # Mesh extraction for "generate" node
-        self._report(progress_cb, 80, f"Reconstructing watertight mesh (grid={grid_resolution})...")
+        # Mesh extraction for "generate" node (IDOL Mesh)
+        self._report(progress_cb, 80, f"Reconstructing high-detail watertight mesh (grid={grid_resolution}, taubin={taubin})...")
         self._check_cancelled(cancel_event)
 
         try:
@@ -501,6 +523,8 @@ class IdolGenerator(BaseGenerator):
                 gaussian=output.gaussian,
                 output_glb_path=str(glb_path),
                 grid_resolution=grid_resolution,
+                vivid_color=vivid_color,
+                taubin=taubin,
             )
         except Exception as e:
             logger.warning(f"Direct mesh extraction error: {e}. Falling back to PLY reconstruction...")
@@ -508,6 +532,7 @@ class IdolGenerator(BaseGenerator):
                 ply_path=str(ply_path),
                 output_glb_path=str(glb_path),
                 grid_resolution=grid_resolution,
+                vivid_color=vivid_color,
             )
 
         self._check_cancelled(cancel_event)

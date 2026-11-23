@@ -55,12 +55,27 @@
         },
         {
           "id": "grid_resolution",
-          "label": "Mesh Resolution",
-          "type": "int",
-          "default": 160,
-          "min": 128,
-          "max": 256,
-          "tooltip": "Grid resolution for Marching Cubes mesh reconstruction."
+          "label": "Mesh Detail",
+          "type": "select",
+          "default": 224,
+          "options": [
+            {"value": 160, "label": "Medium (160 - fast)"},
+            {"value": 224, "label": "High (224 - recommended)"},
+            {"value": 288, "label": "Ultra (288 - finest armor detail)"}
+          ],
+          "tooltip": "Surface Nets / TSDF grid resolution. Higher = finer surface detail and crisper edges."
+        },
+        {
+          "id": "mesh_smoothing",
+          "label": "Mesh Smoothing",
+          "type": "select",
+          "default": "Medium",
+          "options": [
+            {"value": "Light", "label": "Light (crisper edges)"},
+            {"value": "Medium", "label": "Medium (balanced)"},
+            {"value": "Strong", "label": "Strong (smoother)"}
+          ],
+          "tooltip": "Taubin volume-preserving smoothing iterations."
         },
         {
           "id": "cfg_strength",
@@ -149,12 +164,27 @@
         },
         {
           "id": "grid_resolution",
-          "label": "Mesh Resolution",
-          "type": "int",
-          "default": 160,
-          "min": 128,
-          "max": 256,
-          "tooltip": "Grid resolution for Marching Cubes mesh reconstruction."
+          "label": "Mesh Detail",
+          "type": "select",
+          "default": 224,
+          "options": [
+            {"value": 160, "label": "Medium (160 - fast)"},
+            {"value": 224, "label": "High (224 - recommended)"},
+            {"value": 288, "label": "Ultra (288 - finest armor detail)"}
+          ],
+          "tooltip": "Surface Nets / TSDF grid resolution. Higher = finer surface detail and crisper edges."
+        },
+        {
+          "id": "mesh_smoothing",
+          "label": "Mesh Smoothing",
+          "type": "select",
+          "default": "Medium",
+          "options": [
+            {"value": "Light", "label": "Light (crisper edges)"},
+            {"value": "Medium", "label": "Medium (balanced)"},
+            {"value": "Strong", "label": "Strong (smoother)"}
+          ],
+          "tooltip": "Taubin volume-preserving smoothing iterations."
         },
         {
           "id": "colorize_mode",
