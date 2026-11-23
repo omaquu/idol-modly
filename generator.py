@@ -498,6 +498,7 @@ class IdolGenerator(BaseGenerator):
 
         # For "createSplat": export raw 3D Gaussian Splat (.ply and .splat) directly.
         if node_id == "createSplat":
+            self._save_asset_thumbnail(ply_path, image)
             self._report(progress_cb, 100, "Gaussian Splat complete!")
             return ply_path
 
@@ -526,8 +527,54 @@ class IdolGenerator(BaseGenerator):
             )
 
         self._check_cancelled(cancel_event)
+        self._save_asset_thumbnail(glb_path, image)
         self._report(progress_cb, 100, "Generation complete!")
         return glb_path
+
+    def _save_asset_thumbnail(self, asset_path: Path, image: Image.Image) -> None:
+        """Cache a thumbnail in Modly's thumbnail directory so Library displays preview instantly."""
+        try:
+            import hashlib, json
+            app_data = os.environ.get("APPDATA")
+            if not app_data:
+                return
+            thumbs_dir = Path(app_data) / "Modly" / "thumbnails"
+            thumbs_dir.mkdir(parents=True, exist_ok=True)
+            workspace_dir = getattr(self, "workspace_dir", None) or self.outputs_dir.parent
+            rel_path = f"Workflows/{asset_path.name}"
+
+            key = hashlib.sha256(f"{os.path.abspath(str(workspace_dir))}\n{rel_path}".encode("utf-8")).hexdigest()[:32]
+            st = asset_path.stat()
+            mtime_ms = int(st.st_mtime * 1000)
+
+            alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+            def to_b36(num):
+                if num == 0: return "0"
+                res = []
+                num = abs(int(num))
+                while num:
+                    res.append(alphabet[num % 36])
+                    num //= 36
+                return "".join(reversed(res))
+
+            version = f"{to_b36(mtime_ms)}-{to_b36(st.st_size)}-r1"
+            thumb_path = thumbs_dir / f"{key}.{version}.webp"
+            sidecar_path = thumbs_dir / f"{key}.json"
+
+            sidecar_path.write_text(json.dumps({"workspaceDir": str(workspace_dir), "workspacePath": rel_path}), encoding="utf-8")
+
+            thumb_img = image.copy()
+            thumb_img.thumbnail((256, 256), Image.Resampling.LANCZOS)
+            canvas = Image.new("RGBA", (256, 256), (24, 24, 27, 255))
+            offset = ((256 - thumb_img.width) // 2, (256 - thumb_img.height) // 2)
+            if thumb_img.mode == "RGBA":
+                canvas.paste(thumb_img, offset, thumb_img)
+            else:
+                canvas.paste(thumb_img, offset)
+            canvas.save(str(thumb_path), "WEBP", quality=90)
+            logger.info(f"Auto-saved thumbnail to {thumb_path.name}")
+        except Exception as e:
+            logger.warning(f"Could not auto-save thumbnail: {e}")
 
     def _run_splat_to_mesh(self, input_data, params: dict, progress_cb, cancel_event) -> Path:
         """
