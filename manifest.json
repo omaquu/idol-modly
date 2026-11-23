@@ -1,0 +1,140 @@
+{
+  "id": "idol",
+  "name": "IDOL",
+  "type": "model",
+  "source": "https://github.com/omaquu/idol-modly",
+  "description": "Single-image to 3D Gaussian Splatting powered by Speridlabs IDOL. Generates high-density 3D Gaussians and watertight meshes locally on your GPU.",
+  "version": "1.0.0",
+  "author": "omaquu",
+  "generator_class": "IdolGenerator",
+  "vram_gb": 8,
+  "tags": ["image-to-3d", "gaussian-splatting", "mesh", "fast"],
+  "nodes": [
+    {
+      "id": "generate",
+      "name": "IDOL (Mesh)",
+      "input": "image",
+      "output": "mesh",
+      "hf_repo": "speridlabs/idol",
+      "download_check": "denoiser.safetensors",
+      "hf_skip_prefixes": [],
+      "params_schema": [
+        {
+          "id": "mode",
+          "label": "Input Mode",
+          "type": "select",
+          "default": "synthetic",
+          "options": [
+            {"value": "synthetic", "label": "Synthetic / Render / AI (Crop 1.2)"},
+            {"value": "real", "label": "Real Photograph (Crop 1.7)"}
+          ],
+          "tooltip": "Use 'synthetic' for AI-generated images or digital renders, 'real' for real-world photos."
+        },
+        {
+          "id": "steps",
+          "label": "Sampling Steps",
+          "type": "int",
+          "default": 30,
+          "min": 10,
+          "max": 60,
+          "tooltip": "Number of flow-matching sampling steps. Higher values improve quality but take longer."
+        },
+        {
+          "id": "num_gaussians",
+          "label": "Gaussians",
+          "type": "select",
+          "default": 131072,
+          "options": [
+            {"value": 32768, "label": "32k (Fast / Low VRAM)"},
+            {"value": 65536, "label": "65k"},
+            {"value": 131072, "label": "131k (Balanced)"},
+            {"value": 262144, "label": "262k (High Detail)"},
+            {"value": 524288, "label": "524k (Ultra)"}
+          ],
+          "tooltip": "Number of 3D Gaussians to generate."
+        },
+        {
+          "id": "grid_resolution",
+          "label": "Mesh Resolution",
+          "type": "int",
+          "default": 160,
+          "min": 128,
+          "max": 256,
+          "tooltip": "Grid resolution for Marching Cubes mesh reconstruction."
+        },
+        {
+          "id": "cfg_strength",
+          "label": "CFG Strength",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 7,
+          "tooltip": "Classifier-free guidance strength."
+        },
+        {
+          "id": "seed",
+          "label": "Seed",
+          "type": "int",
+          "default": 42,
+          "min": -1,
+          "max": 2147483647,
+          "tooltip": "Random seed (-1 for random)."
+        }
+      ]
+    },
+    {
+      "id": "createSplat",
+      "name": "IDOL (Gaussian Splat)",
+      "input": "image",
+      "output": "mesh",
+      "hf_repo": "speridlabs/idol",
+      "download_check": "denoiser.safetensors",
+      "hf_skip_prefixes": [],
+      "params_schema": [
+        {
+          "id": "mode",
+          "label": "Input Mode",
+          "type": "select",
+          "default": "synthetic",
+          "options": [
+            {"value": "synthetic", "label": "Synthetic / Render / AI"},
+            {"value": "real", "label": "Real Photograph"}
+          ],
+          "tooltip": "Use 'synthetic' for AI-generated images or digital renders, 'real' for real-world photos."
+        },
+        {
+          "id": "steps",
+          "label": "Sampling Steps",
+          "type": "int",
+          "default": 30,
+          "min": 10,
+          "max": 60,
+          "tooltip": "Number of sampling steps."
+        },
+        {
+          "id": "num_gaussians",
+          "label": "Gaussians",
+          "type": "select",
+          "default": 262144,
+          "options": [
+            {"value": 65536, "label": "65k"},
+            {"value": 131072, "label": "131k"},
+            {"value": 262144, "label": "262k (Best)"},
+            {"value": 524288, "label": "524k (Ultra)"},
+            {"value": 1048576, "label": "1M (Maximum)"}
+          ],
+          "tooltip": "Number of 3D Gaussians to generate."
+        },
+        {
+          "id": "seed",
+          "label": "Seed",
+          "type": "int",
+          "default": 42,
+          "min": -1,
+          "max": 2147483647,
+          "tooltip": "Random seed (-1 for random)."
+        }
+      ]
+    }
+  ]
+}
