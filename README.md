@@ -17,6 +17,21 @@ This repository is packaged as an official **Modly extension** and can also be u
 
 ---
 
+> [!IMPORTANT]
+> ### ⚠️ Required: Accept Model Terms on Hugging Face!
+> IDOL uses two gated image encoder models hosted on Hugging Face. Before your first generation, you **must accept the terms** on Hugging Face with your account:
+> 
+> 1. 👉 **[black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)** — Click **"Agree and access repository"**
+> 2. 👉 **[facebook/dinov3-vith16plus-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m)** — Click **"Agree and access repository"**
+> 
+> Then ensure your Hugging Face token is active:
+> - **In Modly:** Modly manages your Hugging Face token in its settings automatically.
+> - **In Terminal:** Run `huggingface-cli login` or set `export HF_TOKEN="your_token_here"`.
+> 
+> *(Note: If Meta's approval for DINOv3 is pending review, this extension automatically falls back to an identical open mirror so you can generate immediately without waiting!)*
+
+---
+
 ## 🚀 Using in Modly
 
 ### 1. Install Extension in Modly
@@ -47,17 +62,20 @@ Once installed, IDOL adds two nodes to your workflow canvas:
 
 ---
 
-## 🔑 Prerequisites (Gated Hugging Face Models)
+## 🔑 Prerequisites & Authentication Details
 
-IDOL uses DINOv3 and FLUX.2 VAE encoders. Before running, accept the terms on Hugging Face:
-1. [facebook/dinov3-vith16plus-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m)
-2. [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
+IDOL downloads weights (~3.1 GB) on first run from [`speridlabs/idol`](https://huggingface.co/speridlabs/idol).
 
-Then authenticate your environment:
-```bash
-huggingface-cli login
-# or set the HF_TOKEN environment variable
-```
+To authenticate for the gated encoders:
+1. Create a free account at [huggingface.co](https://huggingface.co).
+2. Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (Read permissions).
+3. Accept access at:
+   - [black-forest-labs/FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev)
+   - [facebook/dinov3-vith16plus-pretrain-lvd1689m](https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m)
+4. Log in locally:
+   ```bash
+   huggingface-cli login
+   ```
 
 ---
 
@@ -84,8 +102,8 @@ from PIL import Image
 from idol.pipeline import IdolPipeline
 from splat_mesh import gaussian_object_to_glb
 
-# Load pipeline
-pipeline = IdolPipeline.from_pretrained("speridlabs/idol", device="cuda")
+# Load pipeline (Windows automatically uses optimize=False for CUDA eager mode)
+pipeline = IdolPipeline.from_pretrained("speridlabs/idol", device="cuda", optimize=False)
 
 # Generate Gaussians
 output = pipeline(
@@ -111,7 +129,7 @@ gaussian_object_to_glb(output.gaussian, "output.glb", grid_resolution=160)
 | **VRAM** | 8 GB | 10+ GB |
 | **GPU** | NVIDIA (CUDA sm_75+) / Apple Silicon (MPS) | NVIDIA RTX 3060 / 4070+ |
 | **Python** | 3.10+ | 3.10 – 3.12 |
-| **PyTorch** | 2.5+ | Latest |
+| **PyTorch** | 2.5+ | Latest (2.6.0+cu124 recommended) |
 
 ---
 
