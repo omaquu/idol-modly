@@ -464,7 +464,7 @@
           "id": "mesh_detail",
           "label": "Mesh Detail",
           "type": "select",
-          "default": 9,
+          "default": 10,
           "options": [
             {"value": 7, "label": "Low (7)"},
             {"value": 8, "label": "Medium (8)"},
@@ -502,7 +502,7 @@
           "id": "texture",
           "label": "Texture",
           "type": "select",
-          "default": "Auto",
+          "default": "Baked 4K",
           "options": [
             {"value": "Auto", "label": "Auto (best, +2min)"},
             {"value": "Vertex colors", "label": "Vertex colors (fast)"},

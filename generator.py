@@ -496,27 +496,10 @@ class IdolGenerator(BaseGenerator):
         except Exception as exc:
             logger.warning(f"Failed to write .splat sidecar: {exc}")
 
-        from splat_mesh import reconstruct_gaussian_to_glb, gaussian_object_to_glb, extract_mesh_from_ply
-
-        # For "createSplat": save splat files (.ply + .splat) AND create companion .glb preview
-        # so Modly's Library tab generates a 3D thumbnail and allows clicking/opening!
+        # For "createSplat": export raw 3D Gaussian Splat (.ply and .splat) directly.
         if node_id == "createSplat":
-            self._report(progress_cb, 85, "Generating Library 3D preview (.glb)...")
-            try:
-                gaussian_object_to_glb(
-                    gaussian=output.gaussian,
-                    output_glb_path=str(glb_path),
-                    mesh_detail=8,
-                    color_mode="Vivid",
-                    texture="Vertex colors",
-                )
-                logger.info(f"Companion preview GLB written to {glb_path.name}")
-                self._report(progress_cb, 100, "Gaussian Splat complete (Library preview ready)!")
-                return glb_path
-            except Exception as exc:
-                logger.warning(f"Failed to generate companion GLB: {exc}")
-                self._report(progress_cb, 100, "Gaussian Splat complete!")
-                return ply_path
+            self._report(progress_cb, 100, "Gaussian Splat complete!")
+            return ply_path
 
         # Mesh extraction for "generate" node (IDOL Mesh) with full 2K Texture Baking
         self._report(progress_cb, 80, f"Reconstructing mesh & baking textures (detail={mesh_detail}, texture={texture})...")
@@ -587,10 +570,10 @@ class IdolGenerator(BaseGenerator):
         if not splat_path or not splat_path.exists():
             raise ValueError(f"No valid .ply or .splat file found for Splat to Mesh. Provided: {input_data}")
 
-        mesh_detail = params.get("mesh_detail", 9)
+        mesh_detail = params.get("mesh_detail", 10)
         mesh_smoothing = params.get("mesh_smoothing", "Medium")
         color_mode = params.get("color_mode", "Refined")
-        texture = params.get("texture", "Auto")
+        texture = params.get("texture", "Baked 4K")
 
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         base_id = f"{splat_path.stem}_mesh"
