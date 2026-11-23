@@ -99,9 +99,10 @@
             {"value": "Auto", "label": "Auto (best, +2min)"},
             {"value": "Vertex colors", "label": "Vertex colors (fast)"},
             {"value": "Baked 1K", "label": "Baked 1K"},
-            {"value": "Baked 2K", "label": "Baked 2K"}
+            {"value": "Baked 2K", "label": "Baked 2K"},
+            {"value": "Baked 4K", "label": "Baked 4K (Ultra)"}
           ],
-          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping."
+          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping (or choose Baked 4K for maximum crispness)."
         },
         {
           "id": "cfg_strength",
@@ -234,9 +235,10 @@
             {"value": "Auto", "label": "Auto (best, +2min)"},
             {"value": "Vertex colors", "label": "Vertex colors (fast)"},
             {"value": "Baked 1K", "label": "Baked 1K"},
-            {"value": "Baked 2K", "label": "Baked 2K"}
+            {"value": "Baked 2K", "label": "Baked 2K"},
+            {"value": "Baked 4K", "label": "Baked 4K (Ultra)"}
           ],
-          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping."
+          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping (or choose Baked 4K for maximum crispness)."
         },
         {
           "id": "colorize_mode",
@@ -505,9 +507,10 @@
             {"value": "Auto", "label": "Auto (best, +2min)"},
             {"value": "Vertex colors", "label": "Vertex colors (fast)"},
             {"value": "Baked 1K", "label": "Baked 1K"},
-            {"value": "Baked 2K", "label": "Baked 2K"}
+            {"value": "Baked 2K", "label": "Baked 2K"},
+            {"value": "Baked 4K", "label": "Baked 4K (Ultra)"}
           ],
-          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping."
+          "tooltip": "Auto: bakes refined 2K UV texture directly from Gaussians with xatlas unwrapping (or choose Baked 4K for maximum crispness)."
         }
       ]
     }

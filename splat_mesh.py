@@ -599,12 +599,17 @@ def _close_holes(verts, faces, colors, maxholesize: int = 1000000):
 
 
 _RES_MAP = {7: 128, 8: 160, 9: 224, 10: 288, 128: 128, 160: 160, 224: 224, 256: 256, 288: 288}
-_TEX_MAP = {"Auto": "auto", "auto": "auto", "Vertex colors": None, "vertex": None, "Baked 1K": 1024, "Baked 2K": 2048, 1024: 1024, 2048: 2048}
+_TEX_MAP = {
+    "Auto": "auto", "auto": "auto",
+    "Vertex colors": None, "vertex": None,
+    "Baked 1K": 1024, "Baked 2K": 2048, "Baked 4K": 4096,
+    1024: 1024, 2048: 2048, 4096: 4096,
+}
 _SMOOTH_MAP = {"None": 0, "Light": 6, "Medium": 12, "Strong": 18, 0: 0, 6: 6, 12: 12, 18: 18}
 _FLIP = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], np.float32)
 
 
-def _prep_texture_geometry(verts, faces, target=50000):
+def _prep_texture_geometry(verts, faces, target=65000):
     """Volumetric remesh to manifold + decimate to target faces for safe xatlas unwrapping."""
     import pymeshlab as ml
     ms = ml.MeshSet()
