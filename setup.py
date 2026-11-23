@@ -4,12 +4,6 @@ setup.py - Extension setup script for IDOL Modly Extension.
 Creates an isolated venv and installs all required dependencies.
 Called by Modly at extension install time with:
     python setup.py <json_args>
-where json_args contains:
-    python_exe  - path to Modly's embedded Python
-    ext_dir     - absolute path to this extension directory
-    gpu_sm      - GPU compute capability integer (e.g. 89 for RTX 4090/Ada)
-    accelerator - "cuda" | "mps" | "cpu"
-    platform    - process.platform ("win32", "darwin", "linux")
 """
 
 import json
@@ -82,37 +76,36 @@ def setup(
         print("[idol-setup] CPU-only -> PyTorch from standard PyPI")
         pip(venv, "install", "torch>=2.5.0", "torchvision>=0.20.0")
 
-    # 2. Install core dependencies from requirements.txt or explicit list
-    # Note: BiRefNet is bundled in idol/models/birefnet.py, so NO external birefnet package
-    print("[idol-setup] Installing core dependencies ...")
-    req_file = ext_dir / "requirements.txt"
-    if req_file.exists():
-        pip(venv, "install", "-r", str(req_file))
-    else:
-        pip(
-            venv,
-            "install",
-            "numpy",
-            "pillow",
-            "tqdm",
-            "huggingface_hub",
-            "safetensors",
-            "tensordict",
-            "transformers",
-            "diffusers",
-            "accelerate",
-            "plyfile",
-            "trimesh",
-            "scipy",
-            "scikit-image",
-            "einops",
-        )
+    # 2. Install tensordict with pinned version and --no-deps to prevent pip from upgrading PyTorch
+    print("[idol-setup] Installing tensordict (pinned to avoid PyTorch version mismatch) ...")
+    pip(venv, "install", "orjson", "cloudpickle", "pyvers")
+    pip(venv, "install", "tensordict==0.7.0", "--no-deps")
 
-    # 3. Install the idol package itself in editable mode without reinstalling deps
+    # 3. Install core dependencies
+    print("[idol-setup] Installing core dependencies ...")
+    pip(
+        venv,
+        "install",
+        "transformers",
+        "diffusers",
+        "accelerate",
+        "huggingface_hub",
+        "safetensors",
+        "numpy",
+        "pillow",
+        "plyfile",
+        "tqdm",
+        "trimesh",
+        "scipy",
+        "scikit-image",
+        "einops",
+    )
+
+    # 4. Install the idol package itself in editable mode without reinstalling deps
     print("[idol-setup] Installing idol package in editable mode ...")
     pip(venv, "install", "-e", str(ext_dir), "--no-deps")
 
-    # 4. Optional flash-attn on SM >= 80 CUDA
+    # 5. Optional flash-attn on SM >= 80 CUDA
     if accelerator == "cuda" and gpu_sm >= 80:
         print("[idol-setup] Attempting optional flash-attn install ...")
         try:
@@ -143,7 +136,6 @@ if __name__ == "__main__":
             platform_name=args.get("platform", ""),
         )
     else:
-        # Default fallback
         setup(
             python_exe=sys.executable,
             ext_dir=Path(__file__).resolve().parent,

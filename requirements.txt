@@ -1,9 +1,10 @@
+orjson
+tensordict==0.7.0
 transformers
 diffusers
 accelerate
 huggingface_hub
 safetensors
-tensordict
 numpy
 pillow
 plyfile
