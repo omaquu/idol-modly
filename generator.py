@@ -424,13 +424,16 @@ class IdolGenerator(BaseGenerator):
 
         # Parse image
         if isinstance(image_bytes, bytes):
-            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            image = Image.open(io.BytesIO(image_bytes))
         elif isinstance(image_bytes, str):
-            image = Image.open(image_bytes).convert("RGB")
+            image = Image.open(image_bytes)
         elif isinstance(image_bytes, Image.Image):
-            image = image_bytes.convert("RGB")
+            image = image_bytes
         else:
             raise ValueError(f"Unsupported image input type: {type(image_bytes)}")
+
+        if image.mode not in ("RGB", "RGBA"):
+            image = image.convert("RGBA" if "A" in image.mode or "transparency" in image.info else "RGB")
 
         # Ensure model is loaded
         if self._pipeline is None:

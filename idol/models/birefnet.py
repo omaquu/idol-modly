@@ -475,17 +475,28 @@ class BiRefNet(nn.Module):
     def remove_background(self, image) -> "Image.Image":
         from PIL import Image
         W, H = image.size
-        arr = np.array(image, dtype=np.float32) / 255.0
+        # Letterbox/pad to square to preserve aspect ratio and avoid squashing tall (vertical) or wide objects
+        max_dim = max(W, H)
+        pad_size = int(max_dim * 1.06)
+        pad_x = (pad_size - W) // 2
+        pad_y = (pad_size - H) // 2
+
+        padded = Image.new("RGB", (pad_size, pad_size), (0, 0, 0))
+        padded.paste(image.convert("RGB"), (pad_x, pad_y))
+
+        arr = np.array(padded, dtype=np.float32) / 255.0
         t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
         t = F.interpolate(t, size=self.INPUT_SIZE, mode='bilinear', align_corners=True)
         mean = torch.tensor(self._NORM_MEAN).view(1, 3, 1, 1)
         std  = torch.tensor(self._NORM_STD).view(1, 3, 1, 1)
         t = ((t - mean) / std).to(device=self.device, dtype=self.dtype)
         alpha = self.forward(t)
-        alpha = F.interpolate(alpha.float(), size=(H, W), mode='bilinear', align_corners=True)[0, 0]
+        alpha = F.interpolate(alpha.float(), size=(pad_size, pad_size), mode='bilinear', align_corners=True)[0, 0]
         a = (alpha.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-        rgba = image.copy()
-        rgba.putalpha(Image.fromarray(a, mode="L"))
+        a_crop = a[pad_y:pad_y + H, pad_x:pad_x + W]
+
+        rgba = image.copy().convert("RGBA")
+        rgba.putalpha(Image.fromarray(a_crop, mode="L"))
         return rgba
 
 
