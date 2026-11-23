@@ -490,6 +490,14 @@ class IdolGenerator(BaseGenerator):
         ply_path = self.outputs_dir / f"{base_id}.ply"
         glb_path = self.outputs_dir / f"{base_id}.glb"
 
+        # Splat style: "spiky" preserves IDOL's signature needle-like anisotropic Gaussians
+        # (great for stylized fur, mechs, bristles). "smooth" rounds them into softer droplets.
+        splat_style = str(params.get("splat_style", "spiky")).lower()
+        if splat_style == "smooth" and hasattr(output.gaussian, "scaling"):
+            logger.info("Applying smooth splat regularization to Gaussians...")
+            max_s = output.gaussian.scaling.max(dim=-1, keepdim=True).values
+            output.gaussian.scaling = torch.clamp_min(output.gaussian.scaling, max_s * 0.28)
+
         # Save standard 3D Gaussian Splat PLY
         self._report(progress_cb, 70, "Exporting 3D Gaussian Splat (.ply)...")
         output.gaussian.save_ply(str(ply_path))

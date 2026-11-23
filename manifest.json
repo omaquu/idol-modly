@@ -114,6 +114,17 @@
           "tooltip": "Classifier-free guidance strength."
         },
         {
+          "id": "splat_style",
+          "label": "Splat Style",
+          "type": "select",
+          "default": "spiky",
+          "options": [
+            {"value": "spiky", "label": "Spiky / Furry (IDOL Stylized - Default)"},
+            {"value": "smooth", "label": "Smooth / Clean (Rounded)"}
+          ],
+          "tooltip": "Spiky keeps IDOL's signature anisotropic needle Gaussians (ideal for stylized mechs, fur, quills). Smooth rounds them into softer droplets."
+        },
+        {
           "id": "seed",
           "label": "Seed",
           "type": "int",
@@ -274,6 +285,17 @@
           "tooltip": "Classifier-free guidance strength."
         },
         {
+          "id": "splat_style",
+          "label": "Splat Style",
+          "type": "select",
+          "default": "spiky",
+          "options": [
+            {"value": "spiky", "label": "Spiky / Furry (IDOL Stylized - Default)"},
+            {"value": "smooth", "label": "Smooth / Clean (Rounded)"}
+          ],
+          "tooltip": "Spiky keeps IDOL's signature anisotropic needle Gaussians (ideal for stylized mechs, fur, quills). Smooth rounds them into softer droplets."
+        },
+        {
           "id": "seed",
           "label": "Seed",
           "type": "int",
@@ -326,6 +348,17 @@
             {"value": 1048576, "label": "1M (Maximum)"}
           ],
           "tooltip": "Number of 3D Gaussians to generate."
+        },
+        {
+          "id": "splat_style",
+          "label": "Splat Style",
+          "type": "select",
+          "default": "spiky",
+          "options": [
+            {"value": "spiky", "label": "Spiky / Furry (IDOL Stylized - Default)"},
+            {"value": "smooth", "label": "Smooth / Clean (Rounded)"}
+          ],
+          "tooltip": "Spiky keeps IDOL's signature anisotropic needle Gaussians (ideal for stylized mechs, fur, quills). Smooth rounds them into softer droplets."
         },
         {
           "id": "seed",
@@ -439,6 +472,17 @@
             }
           ],
           "tooltip": "Number of Gaussians to generate."
+        },
+        {
+          "id": "splat_style",
+          "label": "Splat Style",
+          "type": "select",
+          "default": "spiky",
+          "options": [
+            {"value": "spiky", "label": "Spiky / Furry (IDOL Stylized - Default)"},
+            {"value": "smooth", "label": "Smooth / Clean (Rounded)"}
+          ],
+          "tooltip": "Spiky keeps IDOL's signature anisotropic needle Gaussians (ideal for stylized mechs, fur, quills). Smooth rounds them into softer droplets."
         },
         {
           "id": "seed",
