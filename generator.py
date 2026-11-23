@@ -132,18 +132,24 @@ class IdolGenerator(BaseGenerator):
         # Import IdolPipeline from idol package
         from idol.pipeline import IdolPipeline
 
+        # On Windows, torch.compile requires Triton which is not available in standard PyTorch wheels.
+        # Running with optimize=False runs in native PyTorch CUDA eager mode, which is fast and avoids JIT crashes.
+        optimize = False if sys.platform == "win32" else True
+
         if weights_path:
-            logger.info(f"Loading IDOL from local weights: {weights_path}")
+            logger.info(f"Loading IDOL from local weights: {weights_path} (optimize={optimize})")
             self._pipeline = IdolPipeline.from_pretrained(
                 weights_path,
                 device=self.device,
+                optimize=optimize,
                 image_encoders=encoder_overrides
             )
         else:
-            logger.info("Loading IDOL from HuggingFace (speridlabs/idol)...")
+            logger.info(f"Loading IDOL from HuggingFace (speridlabs/idol) (optimize={optimize})...")
             self._pipeline = IdolPipeline.from_pretrained(
                 "speridlabs/idol",
                 device=self.device,
+                optimize=optimize,
                 image_encoders=encoder_overrides
             )
 
