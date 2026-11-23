@@ -726,7 +726,12 @@ def reconstruct_gaussian_to_glb(
         device = torch.device(device)
 
     # Extract tensors
+    # Files on disk (.ply / .splat) are already saved in Y-up convention,
+    # so the Z-up→Y-up _FLIP must NOT be applied again (double rotation).
+    # In-memory gaussian objects are still in raw Z-up and need _FLIP.
+    _from_file = False
     if isinstance(gaussian, (str, Path)):
+        _from_file = True
         g_data = load_splat_file(str(gaussian), device=device)
         xyz = g_data["xyz"]
         scale = g_data["scale"]
@@ -745,6 +750,10 @@ def reconstruct_gaussian_to_glb(
         opacity = gaussian.opacity.detach().reshape(-1).float().to(device)
         quat = gaussian.rotation.detach().float().to(device)
         rgb = (gaussian.features_dc[:, 0, :].detach().float() * _C0 + 0.5).clamp(0, 1).to(device)
+
+    # Choose the right coordinate flip: identity for already-Y-up files,
+    # the standard Z-up→Y-up rotation for in-memory raw gaussians.
+    _flip = np.eye(3, dtype=np.float32) if _from_file else _FLIP
 
     res = _RES_MAP.get(int(mesh_detail), 224)
     taubin = _SMOOTH_MAP.get(str(mesh_smoothing), 12)
@@ -841,7 +850,7 @@ def reconstruct_gaussian_to_glb(
             g_val["scale"] = g_val["scale"].clamp_min(0.9 * _sp)
             r = pick_color_path((verts, faces, colors), (nv, nf, uvs, tex), g_val, device)
             if r.get("winner") == "texture":
-                mesh = _build_textured_mesh(nv, nf, uvs, tex, _FLIP)
+                mesh = _build_textured_mesh(nv, nf, uvs, tex, _flip)
                 mesh.export(output_glb_path, file_type="glb")
                 return output_glb_path
         except Exception as exc:
@@ -852,14 +861,14 @@ def reconstruct_gaussian_to_glb(
         try:
             nv, nf, uvs, tex, _ = _bake_candidate(
                 verts, faces, g_all, int(tex_res), device, vivid_color, color_refine)
-            mesh = _build_textured_mesh(nv, nf, uvs, tex, _FLIP)
+            mesh = _build_textured_mesh(nv, nf, uvs, tex, _flip)
             mesh.export(output_glb_path, file_type="glb")
             return output_glb_path
         except Exception as exc:
             print(f"[splat_mesh] Texture bake failed ({exc}); falling back to vertex colors.")
 
     # Step 7: Vertex color fallback
-    verts = verts @ _FLIP
+    verts = verts @ _flip
     mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
     mesh.visual.vertex_colors = np.concatenate(
         [(np.clip(colors, 0, 1) * 255).astype(np.uint8),

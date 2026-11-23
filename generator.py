@@ -502,6 +502,7 @@ class IdolGenerator(BaseGenerator):
         # For "createSplat": export raw 3D Gaussian Splat (.ply and .splat) directly.
         if node_id == "createSplat":
             self._save_asset_thumbnail(ply_path, image)
+            self._save_asset_thumbnail(ply_path.with_suffix(".splat"), image)
             self._report(progress_cb, 100, "Gaussian Splat complete!")
             return ply_path
 
@@ -531,6 +532,8 @@ class IdolGenerator(BaseGenerator):
 
         self._check_cancelled(cancel_event)
         self._save_asset_thumbnail(glb_path, image)
+        self._save_asset_thumbnail(ply_path, image)
+        self._save_asset_thumbnail(ply_path.with_suffix(".splat"), image)
         self._report(progress_cb, 100, "Generation complete!")
         return glb_path
 
