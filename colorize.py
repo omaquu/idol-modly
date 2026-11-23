@@ -153,6 +153,7 @@ def colorize_from_points(
     k=12,
     min_opacity=0.1,
     color_boost="Vivid + Bright",
+    blend_with_existing=False,
 ):
     """
     Transfer per-vertex color from point cloud onto a trimesh.Trimesh.
@@ -166,6 +167,9 @@ def colorize_from_points(
     :param k: Number of nearest neighbours to blend.
     :param min_opacity: Minimum opacity threshold to discard floaters.
     :param color_boost: Color post-processing mode.
+    :param blend_with_existing: If True and mesh already has colors, blend new
+                                colors onto visible/matching surfaces and keep
+                                existing colors on occluded/opposite surfaces.
     :return: Modified trimesh.Trimesh with updated vertex_colors.
     """
     from scipy.spatial import cKDTree
@@ -195,6 +199,7 @@ def colorize_from_points(
 
     k = max(1, min(int(k), len(src)))
     dist, idx = cKDTree(src).query(tgt, k=k)
+    sn = None
     if k == 1:
         colors = rgb[idx]
     else:
@@ -214,6 +219,31 @@ def colorize_from_points(
         colors = (rgb[idx] * w[..., None]).sum(axis=1)
 
     colors = _apply_boost(colors, color_boost)
+
+    if blend_with_existing and hasattr(mesh.visual, "vertex_colors") and len(mesh.visual.vertex_colors) == len(mesh.vertices):
+        try:
+            existing_rgb = np.asarray(mesh.visual.vertex_colors, dtype=np.float64)[:, :3] / 255.0
+            vn = np.asarray(mesh.vertex_normals, dtype=np.float64)
+            if sn is None:
+                sn = _estimate_normals(src)
+            nearest_idx = idx[:, 0] if k > 1 else idx
+            sn_matched = sn[nearest_idx]
+            alignment = np.einsum("vi,vi->v", vn, sn_matched)
+
+            # Smooth weight based on normal alignment
+            alpha = np.clip((alignment - 0.0) / 0.5, 0.0, 1.0)
+
+            # Distance falloff relative to bounding box scale
+            dist0 = dist[:, 0] if k > 1 else dist
+            diag = _bbox_diag(tgt)
+            d_scale = diag * 0.12
+            dist_factor = np.clip(1.0 - (dist0 / max(d_scale, 1e-6)), 0.0, 1.0)
+            alpha = alpha * dist_factor
+
+            colors = existing_rgb * (1.0 - alpha[:, None]) + colors * alpha[:, None]
+        except Exception as exc:
+            print(f"[colorize] Normal-aware blending with existing colors failed: {exc}")
+
     rgba = np.hstack([(np.clip(colors, 0.0, 1.0) * 255).astype(np.uint8),
                       np.full((len(mesh.vertices), 1), 255, dtype=np.uint8)])
     mesh.visual.vertex_colors = rgba

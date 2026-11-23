@@ -251,6 +251,151 @@ class IdolGenerator(BaseGenerator):
         self._report(progress_cb, 100, "Color projection complete!")
         return out_glb_path
 
+    def _run_multiview(
+        self,
+        image: Image.Image,
+        params: dict,
+        progress_cb: Optional[Callable[[int, str], None]] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Path:
+        """
+        Multi-View Node: Automatically generates 3D model from Front view,
+        then projects Back view and Side views in the correct order.
+        """
+        import torch
+        import trimesh
+        from colorize import colorize_from_points, _C0
+        from splat_mesh import gaussian_object_to_glb
+
+        mode = params.get("mode", "synthetic")
+        steps = int(params.get("steps", 30))
+        num_gaussians = int(params.get("num_gaussians", 131072))
+        grid_resolution = int(params.get("grid_resolution", 160))
+        cfg_strength = float(params.get("cfg_strength", 3.0))
+        colorize_mode = str(params.get("colorize_mode", "Aligned (ICP)"))
+        use_icp = "ICP" in colorize_mode
+        color_boost = str(params.get("color_boost", "Vivid + Bright"))
+        seed = int(params.get("seed", 42))
+
+        if seed < 0:
+            seed = int(torch.randint(0, 2**31 - 1, (1,)).item())
+
+        workspace_dir = getattr(self, "workspace_dir", None) or self.outputs_dir.parent
+
+        # Extra image paths passed from Modly: Back View (slot 1), Left View (slot 2), Right View (slot 3)
+        extra_raw = params.get("extra_image_paths") or []
+        valid_extras = [str(p).strip() for p in extra_raw if p is not None and str(p).strip()]
+
+        logger.info(f"[IDOL Multi-View] Starting pipeline: 1 primary view + {len(valid_extras)} secondary view(s).")
+
+        # Step 1: Front view generation & mesh extraction
+        total_steps = 1 + len(valid_extras)
+        self._report(progress_cb, 5, f"Step 1/{total_steps}: Generating 3D model from Front view...")
+        self._check_cancelled(cancel_event)
+
+        front_output = self._pipeline(
+            image=image,
+            mode=mode,
+            seed=seed,
+            steps=steps,
+            cfg_strength=cfg_strength,
+            num_gaussians=num_gaussians,
+            verbose=False,
+        )
+
+        self._check_cancelled(cancel_event)
+        self._report(progress_cb, 35, f"Step 1/{total_steps}: Reconstructing watertight 3D mesh...")
+
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        base_id = f"idol_mv_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        temp_mesh_path = self.outputs_dir / f"{base_id}_temp.glb"
+
+        gaussian_object_to_glb(
+            front_output.gaussian,
+            str(temp_mesh_path),
+            grid_resolution=grid_resolution,
+        )
+
+        mesh = trimesh.load(str(temp_mesh_path), force="mesh")
+        if not isinstance(mesh, trimesh.Trimesh) or len(mesh.vertices) == 0:
+            raise RuntimeError("Failed to extract valid triangle mesh from Front view.")
+
+        # If no secondary views were connected, return the front mesh directly
+        if not valid_extras:
+            out_glb_path = self.outputs_dir / f"{base_id}.glb"
+            mesh.export(str(out_glb_path), file_type="glb")
+            if temp_mesh_path.exists():
+                try:
+                    temp_mesh_path.unlink()
+                except Exception:
+                    pass
+            self._report(progress_cb, 100, "3D Mesh generation complete!")
+            return out_glb_path
+
+        def _load_image(raw_path: str) -> Image.Image:
+            p = Path(raw_path)
+            if raw_path.startswith("/workspace/") and workspace_dir:
+                p = workspace_dir / raw_path[len("/workspace/"):]
+            elif not p.is_absolute() and workspace_dir:
+                p = workspace_dir / p
+            if not p.is_file():
+                raise FileNotFoundError(f"Secondary view image not found: {raw_path} -> {p}")
+            return Image.open(p).convert("RGB")
+
+        view_labels = ["Back view", "Left view", "Right view"]
+
+        for idx, extra_p in enumerate(valid_extras):
+            self._check_cancelled(cancel_event)
+            step_idx = idx + 2
+            label = view_labels[idx] if idx < len(view_labels) else f"View {step_idx}"
+
+            pct_start = int(40 + (idx / len(valid_extras)) * 55)
+            pct_mid = int(pct_start + (55 / (2 * len(valid_extras))))
+
+            self._report(progress_cb, pct_start, f"Step {step_idx}/{total_steps}: Generating 3D splat from {label}...")
+            sec_img = _load_image(extra_p)
+
+            sec_output = self._pipeline(
+                image=sec_img,
+                mode=mode,
+                seed=seed + idx + 1,
+                steps=steps,
+                cfg_strength=cfg_strength,
+                num_gaussians=num_gaussians,
+                verbose=False,
+            )
+
+            self._check_cancelled(cancel_event)
+            self._report(progress_cb, pct_mid, f"Step {step_idx}/{total_steps}: Projecting {label} colors onto mesh...")
+
+            xyz = sec_output.gaussian.xyz.detach().cpu().numpy()
+            opacity = sec_output.gaussian.opacity.detach().cpu().numpy().reshape(-1)
+            f_dc = sec_output.gaussian.features_dc.detach().squeeze(1).cpu().numpy()
+            rgb = np.clip(f_dc * _C0 + 0.5, 0.0, 1.0)
+
+            mesh = colorize_from_points(
+                mesh=mesh,
+                src_xyz=xyz,
+                src_rgb=rgb,
+                opacity=opacity,
+                use_icp=use_icp,
+                pre_rotate=True,
+                color_boost=color_boost,
+                blend_with_existing=True,
+            )
+
+        self._check_cancelled(cancel_event)
+        out_glb_path = self.outputs_dir / f"{base_id}.glb"
+        mesh.export(str(out_glb_path), file_type="glb")
+        if temp_mesh_path.exists():
+            try:
+                temp_mesh_path.unlink()
+            except Exception:
+                pass
+
+        self._report(progress_cb, 100, "Multi-view 3D model complete!")
+        return out_glb_path
+
     def generate(
         self,
         image_bytes: Union[bytes, str, Image.Image],
@@ -290,10 +435,12 @@ class IdolGenerator(BaseGenerator):
 
         self._check_cancelled(cancel_event)
 
-        # Route to Projection node if selected
-        node_id = self.model_dir.name if self.model_dir else "generate"
+        # Route based on node id
+        node_id = os.environ.get("MODEL_NODE_ID") or (self.model_dir.name if self.model_dir else "generate")
         if node_id == "projection":
             return self._run_projection(image, params, progress_cb, cancel_event)
+        elif node_id in ("multiview", "generate-mv", "generate-multiview"):
+            return self._run_multiview(image, params, progress_cb, cancel_event)
 
         # Extract parameters for standard generation
         mode = params.get("mode", "synthetic")

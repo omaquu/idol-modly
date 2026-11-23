@@ -83,6 +83,140 @@
       ]
     },
     {
+      "id": "multiview",
+      "name": "IDOL (Multi-View)",
+      "type": "model.generate",
+      "input": "image",
+      "inputs": [
+        "image",
+        "image",
+        "image",
+        "image"
+      ],
+      "input_labels": [
+        "Front View",
+        "Back View",
+        "Left View (Optional)",
+        "Right View (Optional)"
+      ],
+      "input_contract": [
+        {
+          "name": "image",
+          "label": "Front View",
+          "type": "image",
+          "required": true
+        },
+        {
+          "name": "image_back",
+          "label": "Back View",
+          "type": "image",
+          "required": false
+        },
+        {
+          "name": "image_left",
+          "label": "Left View (Optional)",
+          "type": "image",
+          "required": false
+        },
+        {
+          "name": "image_right",
+          "label": "Right View (Optional)",
+          "type": "image",
+          "required": false
+        }
+      ],
+      "output": "mesh",
+      "hf_repo": "speridlabs/idol",
+      "download_check": "denoiser.safetensors",
+      "hf_skip_prefixes": [],
+      "params_schema": [
+        {
+          "id": "mode",
+          "label": "Input Mode",
+          "type": "select",
+          "default": "synthetic",
+          "options": [
+            {"value": "synthetic", "label": "Synthetic / Render / AI (Crop 1.2)"},
+            {"value": "real", "label": "Real Photograph (Crop 1.7)"}
+          ],
+          "tooltip": "Use 'synthetic' for AI-generated images or digital renders, 'real' for real-world photos."
+        },
+        {
+          "id": "steps",
+          "label": "Sampling Steps",
+          "type": "int",
+          "default": 30,
+          "min": 10,
+          "max": 60,
+          "tooltip": "Number of flow-matching sampling steps per view."
+        },
+        {
+          "id": "num_gaussians",
+          "label": "Gaussians",
+          "type": "select",
+          "default": 131072,
+          "options": [
+            {"value": 32768, "label": "32k (Fast / Low VRAM)"},
+            {"value": 65536, "label": "65k"},
+            {"value": 131072, "label": "131k (Balanced)"},
+            {"value": 262144, "label": "262k (High Detail)"}
+          ],
+          "tooltip": "Number of 3D Gaussians per view."
+        },
+        {
+          "id": "grid_resolution",
+          "label": "Mesh Resolution",
+          "type": "int",
+          "default": 160,
+          "min": 128,
+          "max": 256,
+          "tooltip": "Grid resolution for Marching Cubes mesh reconstruction."
+        },
+        {
+          "id": "colorize_mode",
+          "label": "Color Alignment",
+          "type": "select",
+          "default": "Aligned (ICP)",
+          "options": [
+            {"value": "Direct", "label": "Direct (fast)"},
+            {"value": "Aligned (ICP)", "label": "Aligned (ICP)"}
+          ],
+          "tooltip": "Aligned (ICP) uses 24-rotation search and ICP registration to precisely fit secondary views onto the mesh."
+        },
+        {
+          "id": "color_boost",
+          "label": "Color Boost",
+          "type": "select",
+          "default": "Vivid + Bright",
+          "options": [
+            {"value": "Natural", "label": "Natural"},
+            {"value": "Vivid", "label": "Vivid"},
+            {"value": "Bright", "label": "Bright"},
+            {"value": "Vivid + Bright", "label": "Vivid + Bright"}
+          ],
+          "tooltip": "Boost saturation and brightness of vertex colors."
+        },
+        {
+          "id": "cfg_strength",
+          "label": "CFG Strength",
+          "type": "int",
+          "default": 3,
+          "min": 1,
+          "max": 7,
+          "tooltip": "Classifier-free guidance strength."
+        },
+        {
+          "id": "seed",
+          "label": "Seed",
+          "type": "int",
+          "default": 42,
+          "min": -1,
+          "max": 2147483647,
+          "tooltip": "Random seed (-1 for random)."
+        }
+      ]
+    },
+    {
       "id": "createSplat",
       "name": "IDOL (Gaussian Splat)",
       "input": "image",
