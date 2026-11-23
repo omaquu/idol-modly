@@ -88,46 +88,30 @@
       "type": "model.generate",
       "input": "image",
       "inputs": [
-        "image",
-        "image",
-        "image",
-        "image"
-      ],
-      "input_labels": [
-        "Front View",
-        "Back View",
-        "Left View (Optional)",
-        "Right View (Optional)"
-      ],
-      "input_contract": [
         {
-          "name": "image",
-          "label": "Front View",
           "type": "image",
+          "label": "Front View",
           "required": true
         },
         {
-          "name": "image_back",
+          "type": "image",
           "label": "Back View",
-          "type": "image",
           "required": false
         },
         {
-          "name": "image_left",
-          "label": "Left View (Optional)",
           "type": "image",
+          "label": "Left View",
           "required": false
         },
         {
-          "name": "image_right",
-          "label": "Right View (Optional)",
           "type": "image",
+          "label": "Right View",
           "required": false
         }
       ],
       "output": "mesh",
       "hf_repo": "speridlabs/idol",
-      "download_check": "denoiser.safetensors",
+      "download_check": "../generate/denoiser.safetensors",
       "hf_skip_prefixes": [],
       "params_schema": [
         {
@@ -222,7 +206,7 @@
       "input": "image",
       "output": "mesh",
       "hf_repo": "speridlabs/idol",
-      "download_check": "denoiser.safetensors",
+      "download_check": "../generate/denoiser.safetensors",
       "hf_skip_prefixes": [],
       "params_schema": [
         {

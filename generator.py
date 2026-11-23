@@ -481,8 +481,13 @@ class IdolGenerator(BaseGenerator):
         # Save standard 3D Gaussian Splat PLY
         self._report(progress_cb, 70, "Exporting 3D Gaussian Splat (.ply)...")
         output.gaussian.save_ply(str(ply_path))
+        try:
+            output.gaussian.save_splat(str(ply_path.with_suffix(".splat")))
+            logger.info(f"Splat sidecar written to {ply_path.with_suffix('.splat')}")
+        except Exception as exc:
+            logger.warning(f"Failed to write .splat sidecar: {exc}")
 
-        # Check node type: "createSplat" returns .ply, "generate" returns .glb mesh
+        # Check node type: "createSplat" returns .ply (or .splat)
         if node_id == "createSplat":
             self._report(progress_cb, 100, "Gaussian Splat complete!")
             return ply_path

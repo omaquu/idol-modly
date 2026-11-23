@@ -57,6 +57,44 @@ class Gaussian:
             elements[name] = attributes[:, column]
         PlyData([PlyElement.describe(elements, 'vertex')]).write(path)
 
+    def to_splat_bytes(self) -> bytes:
+        """Serialize Gaussians to standard 32-byte .splat binary format for real-time web viewers."""
+        xyz = self.xyz.detach().cpu().numpy()
+        scale = self.scaling.detach().cpu().numpy()
+        opacity = self.opacity.detach().cpu().numpy().reshape(-1, 1)
+        f_dc = self.features_dc.detach().squeeze(1).cpu().numpy()
+        rotation = self.rotation.detach().cpu().numpy()
+
+        # z-up -> y-up
+        xyz = np.stack([xyz[:, 0], -xyz[:, 2], xyz[:, 1]], axis=1)
+        scale = np.stack([scale[:, 0], scale[:, 2], scale[:, 1]], axis=1)
+        rotation = quaternion_multiply(np.array([np.sqrt(0.5), np.sqrt(0.5), 0.0, 0.0]), rotation)
+
+        C0 = 0.28209479177387814
+        rgb = np.clip((f_dc * C0 + 0.5) * 255, 0, 255).astype(np.uint8)
+        alpha = np.clip(opacity * 255, 0, 255).astype(np.uint8)
+        rgba = np.concatenate([rgb, alpha], axis=1)
+
+        rot = rotation / np.linalg.norm(rotation, axis=-1, keepdims=True)
+        rot_u8 = np.clip(rot * 128 + 128, 0, 255).astype(np.uint8)
+
+        # Sort front to back / largest opacity*extent first
+        order = np.argsort(-opacity[:, 0] * np.prod(scale, axis=-1))
+        xyz, scale, rgba, rot_u8 = xyz[order], scale[order], rgba[order], rot_u8[order]
+
+        data = np.concatenate([
+            xyz.astype(np.float32).view(np.uint8).reshape(-1, 12),
+            scale.astype(np.float32).view(np.uint8).reshape(-1, 12),
+            rgba.reshape(-1, 4),
+            rot_u8.reshape(-1, 4),
+        ], axis=1).reshape(-1)
+        return data.tobytes()
+
+    def save_splat(self, path):
+        """Write standard 3DGS .splat file."""
+        with open(path, "wb") as f:
+            f.write(self.to_splat_bytes())
+
 
 def quaternion_multiply(a, b):
     """Hamilton product a * b of (w, x, y, z) quaternions; a is one quaternion, b is (N, 4)."""
